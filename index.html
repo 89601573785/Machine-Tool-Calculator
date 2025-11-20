@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Онлайн-сборщик производственного цеха</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/sql-wasm.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <div class="main-content">
+            <aside class="sidebar floating-sidebar overlay-sidebar collapsed" id="equipmentSidebar">
+                <div class="sidebar-header">
+                    <h3><i class="fas fa-tools"></i> Каталог оборудования</h3>
+                    <button class="sidebar-toggle-btn" id="sidebarToggleBtn" title="Скрыть каталог">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+                <div class="sidebar-content">
+                    <div class="search-container">
+                        <input type="text" id="equipmentSearch" placeholder="Поиск..." class="search-input">
+                        <i class="fas fa-search search-icon"></i>
+                    </div>
+                    <div class="equipment-catalog" id="equipmentCatalog">
+                        <div style="padding: 2rem; text-align: center; color: #6c757d;">
+                            <i class="fas fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+                            <p>Загрузка оборудования...</p>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+            
+            <main class="workspace" id="workspaceMain">
+                <div class="workspace-container" id="workspaceContainer">
+                    <div class="workspace-area" id="workspaceArea">
+                        <div class="grid-overlay" id="gridOverlay"></div>
+                    </div>
+                </div>
+                
+                <div class="workspace-top-controls">
+                    <button id="catalogToggleBtn" class="btn btn-outline btn-sm" title="Показать/скрыть каталог оборудования"><i class="fas fa-tools"></i> Каталог</button>
+                    <button id="clearWorkspaceBtn" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Очистить</button>
+                    <button id="gridToggleBtn" class="btn btn-outline btn-sm"><i class="fas fa-th"></i> Сетка</button>
+                    <div class="zoom-controls">
+                        <button id="zoomOutBtn" class="btn btn-outline btn-sm"><i class="fas fa-search-minus"></i></button>
+                        <span id="zoomLevel">100%</span>
+                        <button id="zoomInBtn" class="btn btn-outline btn-sm"><i class="fas fa-search-plus"></i></button>
+                        <button id="zoomResetBtn" class="btn btn-outline btn-sm" title="Центрировать рабочую область"><i class="fas fa-crosshairs"></i></button>
+                    </div>
+                    <button id="calculateBtn" class="btn btn-primary"><i class="fas fa-calculator"></i> Рассчитать</button>
+                </div>
+                
+                <div class="connection-instruction collapsed" id="connectionInstruction">
+                    <div class="instruction-header" onclick="toggleInstruction()">
+                        <i class="fas fa-info-circle"></i>
+                        <h4>Как пользоваться</h4>
+                    </div>
+                    <div class="instruction-content" id="instructionContent">
+                        <p><strong>Как добавить станок:</strong></p>
+                        <ol>
+                            <li>Нажмите кнопку "Каталог" вверху</li>
+                            <li>Перетащите станок из каталога на рабочую область</li>
+                        </ol>
+                        <p><strong>Как связать станки:</strong></p>
+                        <ol>
+                            <li>Нажмите <kbd>Shift</kbd> + клик на первом станке</li>
+                            <li>Нажмите <kbd>Shift</kbd> + клик на втором станке</li>
+                            <li>Появится зеленая линия соединения</li>
+                        </ol>
+                        <p><strong>Масштабирование:</strong></p>
+                        <ul>
+                            <li><kbd>Ctrl</kbd> + <kbd>колесо мыши</kbd> - приблизить/отдалить</li>
+                            <li>Кнопки <i class="fas fa-search-plus"></i> и <i class="fas fa-search-minus"></i></li>
+                        </ul>
+                        <p><strong>Перемещение по рабочей области:</strong></p>
+                        <ul>
+                            <li><kbd>Alt</kbd> + <kbd>левая кнопка мыши</kbd> - зажмите и перетащите для перемещения</li>
+                            <li><kbd>Средняя кнопка мыши</kbd> - зажмите и перетащите для перемещения</li>
+                            <li><kbd>Правая кнопка мыши</kbd> - зажмите и перетащите для перемещения</li>
+                        </ul>
+                        <p><strong>Удаление станка:</strong> Нажмите кнопку <strong>×</strong> на станке</p>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div id="calculationChoiceModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3>Расчет выполнен</h3>
+                <span class="close" onclick="closeCalculationChoiceModal()">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 1.5rem; text-align: center;">Выберите действие:</p>
+                <div class="download-options">
+                    <button class="download-option" onclick="viewCalculations()">
+                        <i class="fas fa-eye"></i>
+                        <span>Посмотреть</span>
+                    </button>
+                    <button class="download-option" onclick="downloadPDF(); return false;">
+                        <i class="fas fa-file-pdf"></i>
+                        <span>Скачать PDF</span>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeCalculationChoiceModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="calculationsViewModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 800px; max-height: 90vh;">
+            <div class="modal-header">
+                <h3>Результаты расчета</h3>
+                <span class="close" onclick="closeCalculationsViewModal()">&times;</span>
+            </div>
+            <div class="modal-body" id="calculationsViewContent" style="overflow-y: auto; max-height: calc(90vh - 150px);"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-primary" onclick="downloadPDF(); return false;">
+                    <i class="fas fa-file-pdf"></i> Скачать PDF
+                </button>
+                <button type="button" class="btn btn-secondary" onclick="closeCalculationsViewModal()">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/equipment-data.js"></script>
+    <script src="js/connections.js"></script>
+    <script src="js/main.js"></script>
+</body>
+</html>
+
