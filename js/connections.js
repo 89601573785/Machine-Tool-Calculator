@@ -5,11 +5,42 @@ class ConnectionManager {
         this.connections = [];
         this.selectedStations = [];
     }
+    
+    getStationElementById(stationId) {
+        // stationId — это ID экземпляра на поле (placementId)
+        return this.workspace.querySelector(`[data-placement-id="${stationId}"]`);
+    }
+    
+    canConnect(stationId1, stationId2) {
+        if (stationId1 === stationId2) {
+            return { ok: false, message: 'Нельзя соединить станок сам с собой' };
+        }
+        
+        const el1 = this.getStationElementById(stationId1);
+        const el2 = this.getStationElementById(stationId2);
+        if (!el1 || !el2) {
+            return { ok: false, message: 'Один из станков не найден на рабочей области' };
+        }
+        
+        const row1 = parseInt(el1.dataset.equipmentRow || '0', 10);
+        const row2 = parseInt(el2.dataset.equipmentRow || '0', 10);
+        const safeRow1 = Number.isFinite(row1) ? row1 : 0;
+        const safeRow2 = Number.isFinite(row2) ? row2 : 0;
+        const name1 = (el1.querySelector('h4')?.textContent || '').trim();
+        const name2 = (el2.querySelector('h4')?.textContent || '').trim();
+        
+        // Ограничение: станки из 1 ряда нельзя соединять друг с другом (но можно соединять с другими рядами)
+        if (safeRow1 === 1 && safeRow2 === 1) {
+            return { ok: false, message: `Нельзя соединить: оба станка из 1 ряда (ряды: ${safeRow1} и ${safeRow2}) — "${name1}" ↔ "${name2}"` };
+        }
+        
+        return { ok: true };
+    }
 
     selectStation(element) {
-        const equipmentId = parseInt(element.dataset.equipmentId, 10);
-        if (isNaN(equipmentId)) {
-            console.error('Неверный ID оборудования при выборе станции:', element.dataset.equipmentId);
+        const placementId = parseInt(element.dataset.placementId, 10);
+        if (isNaN(placementId)) {
+            console.error('Неверный ID экземпляра при выборе станции:', element.dataset.placementId);
             return;
         }
         const isAlreadySelected = this.selectedStations.some(s => s.element === element);
@@ -23,7 +54,7 @@ class ConnectionManager {
         element.classList.add('selected');
         this.selectedStations.push({
             element: element,
-            equipmentId: equipmentId
+            stationId: placementId
         });
         
         if (this.selectedStations.length === 2) {
@@ -33,31 +64,10 @@ class ConnectionManager {
     
     async createConnectionAutomatically() {
         const [station1, station2] = this.selectedStations;
-        
-        const existing = this.connections.find(conn => 
-            (conn.fromId === station1.equipmentId && conn.toId === station2.equipmentId) ||
-            (conn.fromId === station2.equipmentId && conn.toId === station1.equipmentId)
-        );
-        
-        if (existing) {
-            this.showNotification('Соединение уже существует', 'warning');
-            this.clearSelection();
-            return;
+        const result = await this.createConnection(station1.stationId, station2.stationId);
+        if (result && result.created) {
+            this.showNotification('Соединение создано', 'success');
         }
-        
-        const connectionId = Date.now();
-        const connection = {
-            id: connectionId,
-            fromId: station1.equipmentId,
-            toId: station2.equipmentId,
-            fromSide: 'right',
-            toSide: 'left',
-            type: 'material_flow'
-        };
-        
-        this.connections.push(connection);
-        this.drawConnection(connection);
-        this.showNotification('Соединение создано', 'success');
         
         setTimeout(() => {
             this.clearSelection();
@@ -153,18 +163,33 @@ class ConnectionManager {
         }, 100);
     }
     
-    removeConnectionsForEquipment(equipmentId) {
+    removeConnectionsForEquipment(stationId) {
         this.connections.forEach(conn => {
-            if (conn.fromId === equipmentId || conn.toId === equipmentId) {
+            if (conn.fromId === stationId || conn.toId === stationId) {
                 if (conn.element) {
                     conn.element.remove();
                 }
             }
         });
-        this.connections = this.connections.filter(conn => conn.fromId !== equipmentId && conn.toId !== equipmentId);
+        this.connections = this.connections.filter(conn => conn.fromId !== stationId && conn.toId !== stationId);
     }
     
     async createConnection(fromId, toId, fromSide, toSide) {
+        const can = this.canConnect(fromId, toId);
+        if (!can.ok) {
+            this.showNotification(can.message, 'error');
+            return { created: false, reason: can.message };
+        }
+        
+        const existing = this.connections.find(conn => 
+            (conn.fromId === fromId && conn.toId === toId) ||
+            (conn.fromId === toId && conn.toId === fromId)
+        );
+        if (existing) {
+            this.showNotification('Соединение уже существует', 'warning');
+            return { created: false, reason: 'exists' };
+        }
+        
         const connectionId = Date.now();
         const connection = {
             id: connectionId,
@@ -177,11 +202,38 @@ class ConnectionManager {
 
         this.connections.push(connection);
         this.drawConnection(connection);
+        return { created: true, id: connectionId };
+    }
+
+    buildOrthogonalPath(x1, y1, x2, y2, startDir, endDir) {
+        // startDir / endDir: 'h' (горизонтально) или 'v' (вертикально)
+        // Цель: первый сегмент выходит из нужной стороны, последний сегмент входит в нужную сторону.
+        // Если точки уже на одной линии — рисуем прямую.
+        if (x1 === x2 || y1 === y2) {
+            return `M ${x1} ${y1} L ${x2} ${y2}`;
+        }
+
+        // Если направления разные — можно обойтись одним углом
+        if (startDir === 'h' && endDir === 'v') {
+            return `M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2}`;
+        }
+        if (startDir === 'v' && endDir === 'h') {
+            return `M ${x1} ${y1} L ${x1} ${y2} L ${x2} ${y2}`;
+        }
+
+        // Если направления одинаковые — нужен “заведомо правильный” двухугольный путь
+        if (startDir === 'h' && endDir === 'h') {
+            const midX = (x1 + x2) / 2;
+            return `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
+        }
+        // startDir === 'v' && endDir === 'v'
+        const midY = (y1 + y2) / 2;
+        return `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`;
     }
 
     drawConnection(connection) {
-        const fromElement = this.workspace.querySelector(`[data-equipment-id="${connection.fromId}"]`);
-        const toElement = this.workspace.querySelector(`[data-equipment-id="${connection.toId}"]`);
+        const fromElement = this.getStationElementById(connection.fromId);
+        const toElement = this.getStationElementById(connection.toId);
         
         if (!fromElement || !toElement) {
             return;
@@ -260,29 +312,38 @@ class ConnectionManager {
         const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
         const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
         marker.id = `arrowhead-${connection.id}`;
-        marker.setAttribute('viewBox', '0 0 20 20');
-        marker.setAttribute('refX', '18'); // Увеличиваем refX чтобы стрелка не проваливалась
-        marker.setAttribute('refY', '10');
-        marker.setAttribute('markerWidth', '20'); // Увеличиваем размер маркера
-        marker.setAttribute('markerHeight', '20');
+        // Компактная стрелка, масштабируется от толщины линии
+        marker.setAttribute('viewBox', '0 0 10 10');
+        marker.setAttribute('refX', '10');
+        marker.setAttribute('refY', '5');
+        marker.setAttribute('markerWidth', '4');
+        marker.setAttribute('markerHeight', '4');
         marker.setAttribute('orient', 'auto');
-        marker.setAttribute('markerUnits', 'userSpaceOnUse');
+        marker.setAttribute('markerUnits', 'strokeWidth');
         
         const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        arrowPath.setAttribute('d', 'M 0,0 L 18,10 L 0,20 Z'); // Увеличиваем размер стрелки
+        arrowPath.setAttribute('d', 'M 0,0 L 10,5 L 0,10 Z');
         arrowPath.setAttribute('fill', '#28a745');
         arrowPath.setAttribute('stroke', '#ffffff');
-        arrowPath.setAttribute('stroke-width', '1.5'); // Увеличиваем обводку
+        arrowPath.setAttribute('stroke-width', '0.9');
         marker.appendChild(arrowPath);
         defs.appendChild(marker);
         svg.appendChild(defs);
 
+        // Определяем направления “выхода” и “входа” по выбранным сторонам точек.
+        // Если точка на левом/правом ребре — горизонтальное направление, иначе вертикальное.
+        const EPS = 0.01;
+        const startDir = (Math.abs(x1 - fromLeft) < EPS || Math.abs(x1 - (fromLeft + fromWidth)) < EPS) ? 'h' : 'v';
+        const endDir = (Math.abs(x2 - toLeft) < EPS || Math.abs(x2 - (toLeft + toWidth)) < EPS) ? 'h' : 'v';
+
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        const pathData = `M ${x1} ${y1} L ${x2} ${y2}`;
+        const pathData = this.buildOrthogonalPath(x1, y1, x2, y2, startDir, endDir);
         path.setAttribute('d', pathData);
         path.setAttribute('stroke', '#28a745');
         path.setAttribute('stroke-width', '4');
         path.setAttribute('fill', 'none');
+        path.setAttribute('stroke-linecap', 'round');
+        path.setAttribute('stroke-linejoin', 'round');
         path.setAttribute('marker-end', `url(#arrowhead-${connection.id})`); // Добавляем стрелку
         path.setAttribute('data-connection-id', connection.id);
         path.style.cursor = 'pointer';

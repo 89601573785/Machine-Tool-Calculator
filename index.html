@@ -44,7 +44,13 @@
                 <div class="workspace-top-controls">
                     <button id="catalogToggleBtn" class="btn btn-outline btn-sm" title="Показать/скрыть каталог оборудования"><i class="fas fa-tools"></i> Каталог</button>
                     <button id="clearWorkspaceBtn" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Очистить</button>
+                    <button id="saveProjectBtn" class="btn btn-outline btn-sm" title="Сохранить проект (в браузере)"><i class="fas fa-save"></i> Сохранить</button>
+                    <button id="loadProjectBtn" class="btn btn-outline btn-sm" title="Загрузить проект (из браузера)"><i class="fas fa-folder-open"></i> Загрузить</button>
+                    <button id="exportProjectBtn" class="btn btn-outline btn-sm" title="Скачать проект в JSON"><i class="fas fa-file-export"></i> Экспорт</button>
+                    <button id="importProjectBtn" class="btn btn-outline btn-sm" title="Загрузить проект из JSON"><i class="fas fa-file-import"></i> Импорт</button>
+                    <input id="importProjectFileInput" type="file" accept="application/json,.json" style="display:none" />
                     <button id="gridToggleBtn" class="btn btn-outline btn-sm"><i class="fas fa-th"></i> Сетка</button>
+                    <button id="snapToggleBtn" class="btn btn-outline btn-sm" title="Привязка к сетке (при перетаскивании удерживайте Ctrl, чтобы временно отключить)"><i class="fas fa-magnet"></i> Привязка</button>
                     <div class="zoom-controls">
                         <button id="zoomOutBtn" class="btn btn-outline btn-sm"><i class="fas fa-search-minus"></i></button>
                         <span id="zoomLevel">100%</span>
