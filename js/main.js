@@ -15,6 +15,8 @@ class FactoryDesigner {
         this.isPanning = false;
         this.lastPanX = 0;
         this.lastPanY = 0;
+        this.lastPointerX = null;
+        this.lastPointerY = null;
         this.isShiftPressed = false;
         this.selectedPlacementId = null;
         this.connectionManager = null;
@@ -269,14 +271,18 @@ class FactoryDesigner {
     }
 
     filterEquipment(searchTerm) {
-        if (!searchTerm.trim()) {
-            this.equipment = this.allEquipment;
+        if (!this.allEquipment || this.allEquipment.length === 0) return;
+        const trimmed = (searchTerm || '').trim();
+        if (!trimmed) {
+            this.equipment = [...this.allEquipment];
         } else {
-            const term = searchTerm.toLowerCase();
-            this.equipment = this.allEquipment.filter(eq => 
-                eq.name.toLowerCase().includes(term) || 
-                eq.equipment_type.toLowerCase().includes(term)
-            );
+            const term = trimmed.toLowerCase();
+            this.equipment = this.allEquipment.filter(eq => {
+                const name = (eq.name || '').toLowerCase();
+                const type = (eq.equipment_type || '').toLowerCase();
+                const category = (eq.category || '').toLowerCase();
+                return name.includes(term) || type.includes(term) || category.includes(term);
+            });
         }
         this.renderEquipmentCatalog();
     }
@@ -533,8 +539,14 @@ class FactoryDesigner {
         if (snapToggleBtn) {
             snapToggleBtn.addEventListener('click', () => this.toggleSnap());
         }
-        document.getElementById('zoomInBtn').addEventListener('click', () => this.setZoom(this.zoom * 1.2));
-        document.getElementById('zoomOutBtn').addEventListener('click', () => this.setZoom(this.zoom * 0.8));
+        document.getElementById('zoomInBtn').addEventListener('click', () => {
+            const pivot = this.getZoomPivot();
+            this.setZoom(this.zoom * 1.2, pivot.x, pivot.y);
+        });
+        document.getElementById('zoomOutBtn').addEventListener('click', () => {
+            const pivot = this.getZoomPivot();
+            this.setZoom(this.zoom * 0.8, pivot.x, pivot.y);
+        });
         document.getElementById('zoomResetBtn').addEventListener('click', () => {
             this.setZoom(1.0);
             this.centerWorkspace();
@@ -576,19 +588,23 @@ class FactoryDesigner {
                 controls.style.left = '340px';
             }
         });
-        document.getElementById('equipmentSearch').addEventListener('input', (e) => this.filterEquipment(e.target.value));
+        const searchInput = document.getElementById('equipmentSearch');
+        if (searchInput) {
+            searchInput.addEventListener('input', (e) => this.filterEquipment(e.target.value));
+        }
         
         const workspaceArea = document.getElementById('workspaceArea');
         const workspaceContainer = document.querySelector('.workspace-container');
         
-        // Обработка колесика мыши для масштабирования
+        // Обработка колесика мыши для масштабирования (зум вокруг курсора)
         if (workspaceArea) {
             workspaceArea.addEventListener('wheel', (e) => {
                 // Если зажат Ctrl или Cmd - масштабирование
                 if (e.ctrlKey || e.metaKey) {
                     e.preventDefault();
                     const delta = e.deltaY > 0 ? 0.9 : 1.1;
-                    this.setZoom(this.zoom * delta);
+                    // Масштабируем так, чтобы точка под курсором оставалась на месте
+                    this.setZoom(this.zoom * delta, e.clientX, e.clientY);
                 }
             }, { passive: false });
         }
@@ -598,6 +614,12 @@ class FactoryDesigner {
             this.isPanning = false;
             this.lastPanX = 0;
             this.lastPanY = 0;
+            
+            // Запоминаем последнюю позицию курсора над рабочей областью
+            workspaceArea.addEventListener('mousemove', (e) => {
+                this.lastPointerX = e.clientX;
+                this.lastPointerY = e.clientY;
+            });
             
             workspaceArea.addEventListener('mousedown', (e) => {
                 // Правая кнопка, средняя кнопка мыши или Alt + левая кнопка
@@ -1151,10 +1173,74 @@ class FactoryDesigner {
         document.getElementById('gridOverlay').classList.toggle('active');
     }
 
-    setZoom(newZoom) {
-        this.zoom = Math.max(0.5, Math.min(3.0, newZoom));
+    getZoomPivot() {
+        const workspace = document.getElementById('workspaceArea');
+        if (!workspace) {
+            return { x: null, y: null };
+        }
+
+        const rect = workspace.getBoundingClientRect();
+
+        // Если есть последняя позиция курсора и она внутри рабочей области — зум вокруг неё
+        if (this.lastPointerX !== null && this.lastPointerY !== null) {
+            if (this.lastPointerX >= rect.left && this.lastPointerX <= rect.right &&
+                this.lastPointerY >= rect.top && this.lastPointerY <= rect.bottom) {
+                return { x: this.lastPointerX, y: this.lastPointerY };
+            }
+        }
+
+        // Иначе — вокруг центра видимой части рабочей области
+        return {
+            x: rect.left + rect.width / 2,
+            y: rect.top + rect.height / 2
+        };
+    }
+
+    setZoom(newZoom, pivotClientX = null, pivotClientY = null) {
+        const workspace = document.getElementById('workspaceArea');
+        if (!workspace) {
+            this.zoom = Math.max(0.5, Math.min(3.0, newZoom));
+            this.updateTransform();
+            const zoomLabel = document.getElementById('zoomLevel');
+            if (zoomLabel) zoomLabel.textContent = Math.round(this.zoom * 100) + '%';
+            return;
+        }
+
+        const oldZoom = this.zoom || 1.0;
+        const clampedZoom = Math.max(0.5, Math.min(3.0, newZoom));
+
+        // Если не передана точка поворота (кнопки +/-), просто меняем масштаб как раньше
+        if (pivotClientX === null || pivotClientY === null) {
+            this.zoom = clampedZoom;
+            this.updateTransform();
+            const zoomLabel = document.getElementById('zoomLevel');
+            if (zoomLabel) zoomLabel.textContent = Math.round(this.zoom * 100) + '%';
+            return;
+        }
+
+        const rect = workspace.getBoundingClientRect();
+        // Смещение курсора относительно текущего прямоугольника рабочей области
+        const offsetX = pivotClientX - rect.left;
+        const offsetY = pivotClientY - rect.top;
+
+        // Мировые координаты точки под курсором до изменения зума
+        const worldX = offsetX / oldZoom;
+        const worldY = offsetY / oldZoom;
+
+        // Экранные координаты этой точки относительно контейнера (без знания containerLeft)
+        const screenX = offsetX + this.panX;
+        const screenY = offsetY + this.panY;
+
+        // Применяем новый масштаб
+        this.zoom = clampedZoom;
+
+        // Пересчитываем pan так, чтобы та же мировая точка осталась под курсором
+        this.panX = screenX - worldX * this.zoom;
+        this.panY = screenY - worldY * this.zoom;
+
         this.updateTransform();
-        document.getElementById('zoomLevel').textContent = Math.round(this.zoom * 100) + '%';
+        const zoomLabel = document.getElementById('zoomLevel');
+        if (zoomLabel) zoomLabel.textContent = Math.round(this.zoom * 100) + '%';
     }
 
     updateTransform() {

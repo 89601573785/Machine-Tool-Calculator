@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "createdAt": "2026-02-27T03:42:26.924Z",
+  "view": {
+    "zoom": 1,
+    "panX": -2928,
+    "panY": -2571
+  },
+  "placed": [
+    {
+      "placementId": 1,
+      "equipmentId": 1,
+      "x": 3500,
+      "y": 2650
+    },
+    {
+      "placementId": 5,
+      "equipmentId": 37,
+      "x": 3950,
+      "y": 2850
+    },
+    {
+      "placementId": 7,
+      "equipmentId": 8,
+      "x": 3500,
+      "y": 3050
+    }
+  ],
+  "connections": []
+}
