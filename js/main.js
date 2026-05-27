@@ -10,7 +10,7 @@ class FactoryDesigner {
         this.panX = 0;
         this.panY = 0;
         this.snapEnabled = false;
-        this.snapSize = 50;
+        this.snapSize = 20;
         this.alignSnapThreshold = 8;
         this.isPanning = false;
         this.lastPanX = 0;
@@ -20,9 +20,68 @@ class FactoryDesigner {
         this.isShiftPressed = false;
         this.selectedPlacementId = null;
         this.connectionManager = null;
+        this.catalogTab = 'all';
+        this.workspaceWidth = 12000;
+        this.workspaceHeight = 9000;
         this.nextPlacementId = 1;
         this.projectStorageKey = this.resolveProjectStorageKey();
         this.init();
+    }
+
+    clampPanToBounds() {
+        const workspace = document.getElementById('workspaceArea');
+        if (!workspace) return;
+        const container = workspace.parentElement;
+        if (!container) return;
+
+        const scaledW = this.workspaceWidth * this.zoom;
+        const scaledH = this.workspaceHeight * this.zoom;
+        const cW = container.clientWidth || window.innerWidth;
+        const cH = container.clientHeight || window.innerHeight;
+
+        const minX = Math.min(0, cW - scaledW);
+        const minY = Math.min(0, cH - scaledH);
+        const maxX = 0;
+        const maxY = 0;
+
+        this.panX = Math.max(minX, Math.min(maxX, this.panX));
+        this.panY = Math.max(minY, Math.min(maxY, this.panY));
+    }
+
+    updateBoundaryMarkers() {
+        const workspace = document.getElementById('workspaceArea');
+        if (!workspace) return;
+        const container = workspace.parentElement;
+        if (!container) return;
+
+        const topMarker = document.getElementById('workspaceTopMarker');
+        const bottomMarker = document.getElementById('workspaceEndMarker');
+        const leftMarker = document.getElementById('workspaceLeftMarker');
+        const rightMarker = document.getElementById('workspaceRightMarker');
+        if (!topMarker && !bottomMarker && !leftMarker && !rightMarker) return;
+
+        const visibleLeft = (-this.panX) / this.zoom;
+        const visibleWidth = (container.clientWidth || window.innerWidth) / this.zoom;
+        const visibleCenterX = visibleLeft + visibleWidth / 2;
+
+        const safePadding = 180;
+        const clampedX = Math.max(
+            safePadding,
+            Math.min(this.workspaceWidth - safePadding, visibleCenterX)
+        );
+
+        const visibleTop = (-this.panY) / this.zoom;
+        const visibleHeight = (container.clientHeight || window.innerHeight) / this.zoom;
+        const visibleCenterY = visibleTop + visibleHeight / 2;
+        const clampedY = Math.max(
+            safePadding,
+            Math.min(this.workspaceHeight - safePadding, visibleCenterY)
+        );
+
+        if (topMarker) topMarker.style.left = `${clampedX}px`;
+        if (bottomMarker) bottomMarker.style.left = `${clampedX}px`;
+        if (leftMarker) leftMarker.style.top = `${clampedY}px`;
+        if (rightMarker) rightMarker.style.top = `${clampedY}px`;
     }
 
     resolveProjectStorageKey() {
@@ -41,6 +100,21 @@ class FactoryDesigner {
         return (input?.value || '').trim() || 'Без названия';
     }
 
+    updateWorkspaceBySidebar() {
+        const sidebar = document.getElementById('equipmentSidebar');
+        const workspace = document.querySelector('.workspace');
+        if (!sidebar || !workspace) return;
+
+        const isCollapsed = sidebar.classList.contains('collapsed');
+        if (isCollapsed) {
+            workspace.style.left = '0';
+            workspace.style.width = '100%';
+        } else {
+            workspace.style.left = '320px';
+            workspace.style.width = 'calc(100% - 320px)';
+        }
+    }
+
     async init() {
         await this.loadEquipment();
         this.setupEventListeners();
@@ -50,7 +124,9 @@ class FactoryDesigner {
             this.connectionManager = new ConnectionManager(workspaceArea);
             // Небольшая задержка для правильного расчета размеров
             setTimeout(() => {
+                this.updateWorkspaceBySidebar();
                 this.centerWorkspace();
+                this.updateGridByZoom();
                 if (this.equipment && this.equipment.length > 0 && this.connectionManager) {
                     this.connectionManager.showNotification(`Загружено ${this.equipment.length} станков`, 'success');
                 }
@@ -73,21 +149,21 @@ class FactoryDesigner {
             
             let data = null;
             
-            // Сначала пробуем загрузить из SQLite базы данных (работает без сервера)
-            // ВАЖНО: через file:// протокол fetch не работает, поэтому будет использован fallback
-            try {
-                data = await this.loadFromSQLite();
-                if (data && data.length > 0) {
-                    console.log('✓ Данные загружены из SQLite базы данных:', data.length, 'элементов');
-                } else {
-                    console.warn('SQLite база данных пуста или не содержит данных');
+            // Сначала пробуем SQLite, но НЕ в file:// режиме (иначе wasm/fetch ловит CORS)
+            const isFileProtocol = window.location.protocol === 'file:';
+            if (!isFileProtocol) {
+                try {
+                    data = await this.loadFromSQLite();
+                    if (data && data.length > 0) {
+                        console.log('✓ Данные загружены из SQLite базы данных:', data.length, 'элементов');
+                    } else {
+                        console.warn('SQLite база данных пуста или не содержит данных');
+                        data = null;
+                    }
+                } catch (sqliteError) {
+                    console.warn('Загрузка из SQLite не удалась:', sqliteError.message);
                     data = null;
                 }
-            } catch (sqliteError) {
-                // Это нормально при работе через file:// протокол
-                // Используем fallback на equipment-data.js
-                console.warn('Загрузка из SQLite не удалась (это нормально при открытии через file://):', sqliteError.message);
-                data = null;
             }
             
             // Если SQLite не сработал, пробуем встроенные данные
@@ -112,8 +188,11 @@ class FactoryDesigner {
                 return;
             }
             
+            if (window.CatalogMeta) {
+                data = CatalogMeta.enrichAll(data);
+            }
             this.equipment = data;
-            this.allEquipment = data;
+            this.allEquipment = [...data];
             console.log(`✓ Загружено ${data.length} единиц оборудования`);
             this.renderEquipmentCatalog();
         } catch (error) {
@@ -314,81 +393,56 @@ class FactoryDesigner {
         catalog.innerHTML = '';
 
         if (!this.equipment || this.equipment.length === 0) {
-            catalog.innerHTML = `
-                <div style="padding: 2rem; text-align: center; color: #6c757d;">
-                    <i class="fas fa-info-circle" style="font-size: 2rem; margin-bottom: 1rem;"></i>
-                    <p><strong>Нет доступного оборудования</strong></p>
-                    <p style="font-size: 0.9rem; margin-top: 1rem; color: #495057;">
-                        Данные оборудования не загружены.
-                    </p>
-                    <p style="font-size: 0.85rem; margin-top: 0.5rem; color: #6c757d;">
-                        <strong>Решение:</strong><br>
-                        1. Если вы открыли страницу через <code>file://</code>, запустите её через локальный сервер (например, Live Server)<br>
-                        2. Убедитесь, что существует <code>data/factory.db</code> или подключён <code>js/equipment-data.js</code><br>
-                        3. Обновите эту страницу (F5)
-                    </p>
-                </div>
-            `;
+            const searchInput = document.getElementById('equipmentSearch');
+            const searchTerm = (searchInput?.value || '').trim();
+            const isSearchNoResults = searchTerm.length > 0 && (this.allEquipment?.length || 0) > 0;
+
+            if (isSearchNoResults) {
+                catalog.innerHTML = `
+                    <div style="padding: 2rem; text-align: center; color: #6c757d;">
+                        <i class="fas fa-search" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+                        <p><strong>Ничего не найдено</strong></p>
+                        <p style="font-size: 0.9rem; margin-top: 0.75rem; color: #495057;">
+                            По запросу «${searchTerm.replace(/</g, '&lt;').replace(/>/g, '&gt;')}» оборудование не найдено.
+                        </p>
+                    </div>
+                `;
+            } else {
+                catalog.innerHTML = `
+                    <div style="padding: 2rem; text-align: center; color: #6c757d;">
+                        <i class="fas fa-info-circle" style="font-size: 2rem; margin-bottom: 1rem;"></i>
+                        <p><strong>Нет доступного оборудования</strong></p>
+                        <p style="font-size: 0.9rem; margin-top: 1rem; color: #495057;">
+                            Данные оборудования не загружены.
+                        </p>
+                    </div>
+                `;
+            }
             return;
         }
 
-        // Группируем оборудование по рядам
-        const row1 = []; // Станки, которые пилят бревно, очищают
-        const row2 = []; // Кромкообрезные
-        const row3 = []; // Изготавливают полуготовую продукцию
-        const other = []; // Остальное оборудование
-        
-        this.equipment.forEach(equipment => {
-            const row = this.getEquipmentRow(equipment);
-            if (row === 1) row1.push(equipment);
-            else if (row === 2) row2.push(equipment);
-            else if (row === 3) row3.push(equipment);
-            else other.push(equipment);
-        });
-        
-        // Функция для отрисовки группы оборудования
         const renderEquipmentGroup = (equipmentList, rowTitle, rowNumber) => {
             if (equipmentList.length === 0) return null;
             
-            const groupDiv = document.createElement('div');
-            groupDiv.className = 'equipment-row-group';
-            groupDiv.dataset.row = rowNumber;
-            
-            const header = document.createElement('div');
-            header.className = 'equipment-row-header';
-            header.innerHTML = `
-                <span class="equipment-row-title">${rowTitle}</span>
-                <span class="equipment-row-count">(${equipmentList.length})</span>
-                <i class="fas fa-chevron-down equipment-row-toggle"></i>
-            `;
-            header.style.cursor = 'pointer';
-            
-            // Обработчик сворачивания/разворачивания
-            header.addEventListener('click', () => {
-                const content = groupDiv.querySelector('.equipment-row-content');
-                const toggle = header.querySelector('.equipment-row-toggle');
-                if (content) {
-                    const isCollapsed = content.style.display === 'none';
-                    content.style.display = isCollapsed ? '' : 'none';
-                    toggle.classList.toggle('fa-chevron-down', isCollapsed);
-                    toggle.classList.toggle('fa-chevron-up', !isCollapsed);
-                    header.classList.toggle('collapsed', !isCollapsed);
-                }
-            });
-            
-            groupDiv.appendChild(header);
-            
             const contentDiv = document.createElement('div');
             contentDiv.className = 'equipment-row-content';
-            groupDiv.appendChild(contentDiv);
             
             equipmentList.forEach(equipment => {
                 const equipmentElement = document.createElement('div');
                 equipmentElement.className = 'equipment-item';
                 equipmentElement.draggable = true;
                 equipmentElement.dataset.equipmentId = equipment.id;
-                equipmentElement.dataset.equipmentRow = rowNumber;
-                
+                equipmentElement.dataset.equipmentRow = 0;
+                equipmentElement.dataset.catalogType = equipment.catalogType || 'machine';
+
+                let badgeHTML = '';
+                if (equipment.catalogType === 'equipment_complex') {
+                    const summary = window.CatalogMeta?.getComplexSummary(equipment.id) || '';
+                    badgeHTML = `<span class="catalog-badge catalog-badge--complex">Комплекс станков</span>${summary ? `<div style="font-size:0.75rem;color:#1e40af;margin-bottom:4px;">${summary}</div>` : ''}`;
+                } else if (equipment.catalogType === 'conveyor') {
+                    badgeHTML = '<span class="catalog-badge catalog-badge--conveyor">Конвейер · на связи</span>';
+                }
+
                 const efficiency = equipment.efficiency || 0.85;
                 const calculatedProductivity = (equipment.productivity * efficiency).toFixed(2);
                 
@@ -421,6 +475,7 @@ class FactoryDesigner {
                 // Формируем HTML карточки
                 equipmentElement.innerHTML = `
                     ${imageHTML}
+                    ${badgeHTML}
                     <div class="equipment-type">${this.getEquipmentTypeName(equipment.equipment_type)}</div>
                     <h4>${equipment.name}</h4>
                     <div class="equipment-card-info">
@@ -434,53 +489,15 @@ class FactoryDesigner {
                 contentDiv.appendChild(equipmentElement);
             });
             
-            return groupDiv;
+            return contentDiv;
         };
         
-        // Отрисовываем группы по порядку
-        const group1 = renderEquipmentGroup(row1, '1 ряд: Станки, которые пилят бревно, очищают', 1);
-        if (group1) catalog.appendChild(group1);
-        
-        const group2 = renderEquipmentGroup(row2, '2 ряд: Кромкообрезные (длительный)', 2);
-        if (group2) catalog.appendChild(group2);
-        
-        const group3 = renderEquipmentGroup(row3, '3 ряд: Изготавливают полуготовую продукцию', 3);
-        if (group3) catalog.appendChild(group3);
-        
-        const groupOther = renderEquipmentGroup(other, 'Прочее оборудование', 0);
-        if (groupOther) catalog.appendChild(groupOther);
+        const flatGroup = renderEquipmentGroup(this.equipment, 'Каталог', 0);
+        if (flatGroup) catalog.appendChild(flatGroup);
     }
 
-    // Определяет ряд станка для группировки и ограничения соединений
+    // Ряды отключены: вся логика через связи/конвейеры.
     getEquipmentRow(equipment) {
-        if (!equipment) return 0;
-        const type = (equipment.equipment_type || '').toLowerCase();
-        const category = (equipment.category || '').toLowerCase();
-        const name = (equipment.name || '').toLowerCase();
-        
-        // 1 ряд: Станки, которые пилят бревно, очищают
-        if (type.includes('бревнопильн') || type.includes('brevnopilynye') ||
-            type.includes('горбыльн') || type.includes('gorbylynye') ||
-            type.includes('пилорам') || type.includes('piloram') ||
-            category.includes('бревнопильн') || category.includes('горбыльн') ||
-            category.includes('пилорам') ||
-            name.includes('пилорам')) {
-            return 1;
-        }
-        
-        // 2 ряд: Кромкообрезные (длительный)
-        if (type.includes('кромкообрезн') || type.includes('kromkoobreznye') ||
-            category.includes('кромкообрезн')) {
-            return 2;
-        }
-        
-        // 3 ряд: Изготавливают полуготовую продукцию (многопильные)
-        if (type.includes('многопильн') || type.includes('mnogopilynye') ||
-            category.includes('многопильн')) {
-            return 3;
-        }
-        
-        // По умолчанию - без ряда (можно соединять со всеми)
         return 0;
     }
 
@@ -549,6 +566,7 @@ class FactoryDesigner {
     }
 
     setupEventListeners() {
+        this.isConnectMode = false;
         document.getElementById('calculateBtn').addEventListener('click', () => this.calculateProduction());
         document.getElementById('clearWorkspaceBtn').addEventListener('click', () => this.clearWorkspace(true));
         document.getElementById('gridToggleBtn').addEventListener('click', () => this.toggleGrid());
@@ -582,28 +600,74 @@ class FactoryDesigner {
             importBtn.addEventListener('click', () => importInput.click());
             importInput.addEventListener('change', (e) => this.importProjectFromFile(e));
         }
+        const howToUseBtn = document.getElementById('howToUseBtn');
+        const howToUseModal = document.getElementById('howToUseModal');
+        const closeHowToUse = () => {
+            if (howToUseModal) howToUseModal.style.display = 'none';
+        };
+        if (howToUseBtn && howToUseModal) {
+            howToUseBtn.addEventListener('click', () => {
+                howToUseModal.style.display = 'block';
+            });
+            document.getElementById('howToUseClose')?.addEventListener('click', closeHowToUse);
+            document.getElementById('howToUseCloseBtn')?.addEventListener('click', closeHowToUse);
+            howToUseModal.addEventListener('click', (e) => {
+                if (e.target === howToUseModal) closeHowToUse();
+            });
+        }
+        const projectMenuBtn = document.getElementById('projectMenuBtn');
+        const projectMenuWrap = document.getElementById('projectMenuWrap');
+        const projectMenuList = document.getElementById('projectMenuList');
+        const positionProjectMenu = () => {
+            if (!projectMenuBtn || !projectMenuList || !projectMenuWrap?.classList.contains('open')) return;
+            const rect = projectMenuBtn.getBoundingClientRect();
+            projectMenuList.style.top = `${rect.bottom + 6}px`;
+            projectMenuList.style.left = `${rect.left}px`;
+            projectMenuList.style.minWidth = `${Math.max(rect.width, 180)}px`;
+        };
+        const closeProjectMenu = () => {
+            projectMenuWrap?.classList.remove('open');
+        };
+        if (projectMenuBtn && projectMenuWrap && projectMenuList) {
+            projectMenuBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                projectMenuWrap.classList.toggle('open');
+                if (projectMenuWrap.classList.contains('open')) {
+                    positionProjectMenu();
+                }
+            });
+            projectMenuList.addEventListener('click', (e) => e.stopPropagation());
+            window.addEventListener('resize', positionProjectMenu);
+            window.addEventListener('scroll', positionProjectMenu, true);
+            document.addEventListener('click', (e) => {
+                if (!projectMenuWrap.contains(e.target)) {
+                    closeProjectMenu();
+                }
+            });
+        }
+        const connectModeBtn = document.getElementById('connectModeBtn');
+        if (connectModeBtn) {
+            connectModeBtn.addEventListener('click', () => {
+                this.isConnectMode = !this.isConnectMode;
+                connectModeBtn.classList.toggle('active', this.isConnectMode);
+                if (!this.isConnectMode) {
+                    document.querySelectorAll('.placed-equipment').forEach(el => el.classList.remove('selected'));
+                    this.selectedPlacementId = null;
+                }
+                this.showNotification(this.isConnectMode ? 'Режим связывания включён' : 'Режим связывания выключен', 'info');
+            });
+        }
         document.getElementById('catalogToggleBtn').addEventListener('click', () => {
             const sidebar = document.getElementById('equipmentSidebar');
             sidebar.classList.toggle('collapsed');
-            // Обновляем позицию кнопок управления
-            const controls = document.querySelector('.workspace-top-controls');
-            if (sidebar.classList.contains('collapsed')) {
-                controls.style.left = '20px';
-            } else {
-                controls.style.left = '340px';
-            }
+            this.updateWorkspaceBySidebar();
         });
         document.getElementById('sidebarToggleBtn').addEventListener('click', (e) => {
             e.stopPropagation();
             const sidebar = document.getElementById('equipmentSidebar');
             sidebar.classList.toggle('collapsed');
-            // Обновляем позицию кнопок управления
-            const controls = document.querySelector('.workspace-top-controls');
-            if (sidebar.classList.contains('collapsed')) {
-                controls.style.left = '20px';
-            } else {
-                controls.style.left = '340px';
-            }
+            this.updateWorkspaceBySidebar();
         });
         const searchInput = document.getElementById('equipmentSearch');
         if (searchInput) {
@@ -613,6 +677,17 @@ class FactoryDesigner {
         const workspaceArea = document.getElementById('workspaceArea');
         const workspaceContainer = document.querySelector('.workspace-container');
         
+        // Отключаем прокрутку страницы колесом (скролл нужен только внутри списков/модалок).
+        window.addEventListener('wheel', (e) => {
+            const inScrollable =
+                !!e.target.closest('.sidebar-content') ||
+                !!e.target.closest('.modal-body') ||
+                !!e.target.closest('.conveyor-picker-list');
+            if (!inScrollable && !(e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+            }
+        }, { passive: false });
+
         // Обработка колесика мыши для масштабирования (зум вокруг курсора)
         if (workspaceArea) {
             workspaceArea.addEventListener('wheel', (e) => {
@@ -639,8 +714,9 @@ class FactoryDesigner {
             });
             
             workspaceArea.addEventListener('mousedown', (e) => {
-                // Правая кнопка, средняя кнопка мыши или Alt + левая кнопка
-                if (e.button === 2 || e.button === 1 || (e.button === 0 && e.altKey)) {
+                // Правая/средняя кнопка, Alt+ЛКМ или ЛКМ по пустому месту рабочей области
+                const onEmptyArea = e.button === 0 && e.target === workspaceArea;
+                if (e.button === 2 || e.button === 1 || (e.button === 0 && e.altKey) || onEmptyArea) {
                     e.preventDefault();
                     this.isPanning = true;
                     this.lastPanX = e.clientX;
@@ -656,6 +732,7 @@ class FactoryDesigner {
                     const deltaY = e.clientY - this.lastPanY;
                     this.panX += deltaX;
                     this.panY += deltaY;
+                    this.clampPanToBounds();
                     this.lastPanX = e.clientX;
                     this.lastPanY = e.clientY;
                     this.updateTransform();
@@ -677,26 +754,35 @@ class FactoryDesigner {
         
         document.addEventListener('keydown', (e) => { if (e.key === 'Shift') this.isShiftPressed = true; });
         document.addEventListener('keyup', (e) => { if (e.key === 'Shift') this.isShiftPressed = false; });
-        
+
         document.addEventListener('click', (e) => {
-            if (this.isShiftPressed && e.target.closest('.placed-equipment')) {
+            const equipmentElement = e.target.closest('.placed-equipment');
+            if (!equipmentElement) return;
+            if (this.isShiftPressed || this.isConnectMode) {
                 e.preventDefault();
-                const equipmentElement = e.target.closest('.placed-equipment');
-                const placementId = parseInt(equipmentElement.dataset.placementId, 10);
-                if (isNaN(placementId)) {
-                    console.error('Неверный ID экземпляра оборудования:', equipmentElement.dataset.placementId);
-                    return;
-                }
-                if (this.selectedPlacementId === null) {
-                    this.selectedPlacementId = placementId;
-                    equipmentElement.classList.add('selected');
-                } else if (this.selectedPlacementId !== placementId) {
-                    this.connectionManager.createConnection(this.selectedPlacementId, placementId);
-                    document.querySelectorAll('.placed-equipment').forEach(el => el.classList.remove('selected'));
-                    this.selectedPlacementId = null;
-                }
+                this.handleConnectionSelection(equipmentElement);
             }
         });
+    }
+
+    handleConnectionSelection(equipmentElement) {
+        const placementId = parseInt(equipmentElement.dataset.placementId, 10);
+        if (isNaN(placementId)) return;
+        if (this.selectedPlacementId === null) {
+            this.selectedPlacementId = placementId;
+            equipmentElement.classList.add('selected');
+            return;
+        }
+        if (this.selectedPlacementId === placementId) return;
+        this.connectionManager.createConnection(this.selectedPlacementId, placementId, 'right', 'left', {
+            ignoreCompatibility: true
+        });
+        document.querySelectorAll('.placed-equipment').forEach(el => el.classList.remove('selected'));
+        this.selectedPlacementId = null;
+        if (this.isConnectMode) {
+            this.isConnectMode = false;
+            document.getElementById('connectModeBtn')?.classList.remove('active');
+        }
     }
 
     toggleSnap() {
@@ -706,8 +792,22 @@ class FactoryDesigner {
         this.showNotification(this.snapEnabled ? 'Привязка к сетке включена' : 'Привязка к сетке выключена', 'info');
     }
 
+    getGridSizes() {
+        const major = this.zoom < 0.9 ? 120 : (this.zoom < 1.5 ? 80 : 50);
+        const minor = this.zoom < 0.9 ? 40 : (this.zoom < 1.5 ? 30 : 20);
+        return { major, minor };
+    }
+
+    getSnapSize() {
+        return this.getGridSizes().minor;
+    }
+
+    getEdgePadding() {
+        return this.getSnapSize();
+    }
+
     snapValue(v) {
-        const size = this.snapSize || 50;
+        const size = this.getSnapSize();
         return Math.round(v / size) * size;
     }
 
@@ -866,7 +966,11 @@ class FactoryDesigner {
                         x = snapped.x;
                         y = snapped.y;
                     }
-                    this.placeEquipment(equipment, x, y);
+                    if (typeof this.handleEquipmentDrop === 'function') {
+                        this.handleEquipmentDrop(equipment, x, y);
+                    } else {
+                        this.placeEquipment(equipment, x, y);
+                    }
                 }
             }
             this.dragElement = null;
@@ -895,21 +999,37 @@ class FactoryDesigner {
         }
         const div = document.createElement('div');
         div.className = 'placed-equipment';
-        div.style.left = `${Math.max(0, x)}px`;
-        div.style.top = `${Math.max(0, y)}px`;
+        const edgePadding = this.getEdgePadding();
+        const cardW = 260;
+        const cardH = 260;
+        const maxX = Math.max(edgePadding, this.workspaceWidth - cardW - edgePadding);
+        const maxY = Math.max(edgePadding, this.workspaceHeight - cardH - edgePadding);
+        let safeX = x;
+        let safeY = y;
+        if (this.snapEnabled) {
+            const snapped = this.applySnap(x, y);
+            safeX = snapped.x;
+            safeY = snapped.y;
+        }
+        safeX = Math.min(maxX, Math.max(edgePadding, safeX));
+        safeY = Math.min(maxY, Math.max(edgePadding, safeY));
+        div.style.left = `${safeX}px`;
+        div.style.top = `${safeY}px`;
         // Уникальный ID экземпляра на поле (важно: один и тот же станок можно разместить несколько раз)
         const placementId = placementIdOverride !== null ? placementIdOverride : this.nextPlacementId++;
         div.dataset.placementId = placementId;
         div.dataset.equipmentId = equipment.id;
-        const row = this.getEquipmentRow(equipment);
-        div.dataset.equipmentRow = row;
+        div.dataset.equipmentRow = 0;
+        div.dataset.catalogType = equipment.catalogType || 'machine';
+        div.dataset.inputType = equipment.input_type || '';
+        div.dataset.outputType = equipment.output_type || '';
         const efficiency = equipment.efficiency || 0.85;
         const calculatedProductivity = (equipment.productivity * efficiency).toFixed(2);
         
         // Добавляем миниатюру картинки
         let imageHTML = '';
         if (equipment.photo) {
-            imageHTML = `<img src="${equipment.photo}" alt="${equipment.name}" style="width: 100%; height: 80px; object-fit: cover; border-radius: 4px; margin-bottom: 5px;" onerror="this.style.display='none'">`;
+            imageHTML = `<img src="${equipment.photo}" alt="${equipment.name}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 6px; margin-bottom: 8px;" onerror="this.style.display='none'">`;
         }
         
         // Форматируем цену
@@ -927,7 +1047,6 @@ class FactoryDesigner {
         div.innerHTML = `
             <button class="delete-btn">×</button>
             ${imageHTML}
-            <div class="equipment-row-badge" title="Технологический ряд станка">Ряд: ${row === 0 ? '—' : row}</div>
             <h4>${equipment.name}</h4>
             <div class="equipment-stats">
                 <p><i class="fas fa-tachometer-alt"></i> ${calculatedProductivity} м³/смену</p>
@@ -938,7 +1057,7 @@ class FactoryDesigner {
         `;
         this.makeDraggable(div);
         workspace.appendChild(div);
-        this.placedEquipment.push({placementId, equipmentId: equipment.id, element: div, x: x, y: y, equipment: equipment});
+        this.placedEquipment.push({placementId, equipmentId: equipment.id, element: div, x: safeX, y: safeY, equipment: equipment});
         // Поддерживаем nextPlacementId так, чтобы он всегда был больше любого существующего ID
         if (placementId >= this.nextPlacementId) this.nextPlacementId = placementId + 1;
         return div;
@@ -973,19 +1092,26 @@ class FactoryDesigner {
             const workspaceRect = workspace.getBoundingClientRect();
             const cursorX = (e.clientX - workspaceRect.left) / this.zoom;
             const cursorY = (e.clientY - workspaceRect.top) / this.zoom;
-            let newX = Math.max(0, cursorX - startX);
-            let newY = Math.max(0, cursorY - startY);
+            const edgePadding = this.getEdgePadding();
+            const maxXRaw = this.workspaceWidth - (element.offsetWidth || 260) - edgePadding;
+            const maxYRaw = this.workspaceHeight - (element.offsetHeight || 260) - edgePadding;
+            const maxX = Math.max(edgePadding, maxXRaw);
+            const maxY = Math.max(edgePadding, maxYRaw);
+            let newX = cursorX - startX;
+            let newY = cursorY - startY;
             if (this.snapEnabled && !e.ctrlKey) {
                 const snapped = this.applySnap(newX, newY);
-                newX = Math.max(0, snapped.x);
-                newY = Math.max(0, snapped.y);
+                newX = snapped.x;
+                newY = snapped.y;
                 const aligned = this.applyAlignmentSnap(newX, newY, element);
-                newX = Math.max(0, aligned.x);
-                newY = Math.max(0, aligned.y);
+                newX = aligned.x;
+                newY = aligned.y;
                 this.setAlignmentGuides(aligned.guideX, aligned.guideY);
             } else {
                 this.hideAlignmentGuides();
             }
+            newX = Math.max(edgePadding, Math.min(maxX, newX));
+            newY = Math.max(edgePadding, Math.min(maxY, newY));
             element.style.left = `${newX}px`;
             element.style.top = `${newY}px`;
             const placedItem = this.placedEquipment.find(item => item.element === element);
@@ -999,8 +1125,8 @@ class FactoryDesigner {
                     this.connectionManager.connections
                         .filter(conn => conn.fromId === placementId || conn.toId === placementId)
                         .forEach(conn => {
-                        this.connectionManager.drawConnection(conn);
-                    });
+                            this.connectionManager.drawConnection(conn);
+                        });
                 }
             }
         };
@@ -1109,7 +1235,7 @@ class FactoryDesigner {
     }
 
     loadProjectFromObject(project) {
-        if (!project || project.version !== 1) {
+        if (!project || (project.version !== 1 && project.version !== 2)) {
             throw new Error('Неподдерживаемый формат проекта');
         }
         if (!Array.isArray(project.placed)) {
@@ -1147,12 +1273,17 @@ class FactoryDesigner {
 
         // Восстанавливаем соединения
         if (this.connectionManager && Array.isArray(project.connections)) {
-            project.connections.forEach(c => {
-                const fromId = Number(c.fromId);
-                const toId = Number(c.toId);
-                if (!Number.isFinite(fromId) || !Number.isFinite(toId)) return;
-                this.connectionManager.createConnection(fromId, toId);
-            });
+            const restore = typeof this.restoreConnections === 'function'
+                ? this.restoreConnections(project.connections)
+                : project.connections.forEach(c => {
+                    const fromId = Number(c.fromId);
+                    const toId = Number(c.toId);
+                    if (!Number.isFinite(fromId) || !Number.isFinite(toId)) return;
+                    this.connectionManager.createConnection(fromId, toId);
+                });
+            if (restore && typeof restore.then === 'function') {
+                restore.catch(err => console.error('Ошибка восстановления связей:', err));
+            }
         }
     }
 
@@ -1204,6 +1335,26 @@ class FactoryDesigner {
 
     toggleGrid() {
         document.getElementById('gridOverlay').classList.toggle('active');
+        this.updateGridByZoom();
+    }
+
+    updateGridByZoom() {
+        const workspace = document.getElementById('workspaceArea');
+        const grid = document.getElementById('gridOverlay');
+        const { major, minor } = this.getGridSizes();
+        this.snapSize = minor;
+        if (workspace) {
+            workspace.style.backgroundSize = `${minor}px ${minor}px`;
+            workspace.style.backgroundImage = 'radial-gradient(circle at 1px 1px, rgba(34, 139, 34, 0.18) 1px, transparent 0)';
+        }
+        if (!grid || !grid.classList.contains('active')) return;
+        grid.style.backgroundImage = `
+            linear-gradient(rgba(34, 139, 34, 0.22) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(34, 139, 34, 0.22) 1px, transparent 1px),
+            linear-gradient(rgba(34, 139, 34, 0.10) 1px, transparent 1px),
+            linear-gradient(90deg, rgba(34, 139, 34, 0.10) 1px, transparent 1px)
+        `;
+        grid.style.backgroundSize = `${major}px ${major}px, ${major}px ${major}px, ${minor}px ${minor}px, ${minor}px ${minor}px`;
     }
 
     getZoomPivot() {
@@ -1272,14 +1423,22 @@ class FactoryDesigner {
         this.panY = screenY - worldY * this.zoom;
 
         this.updateTransform();
+        this.updateGridByZoom();
         const zoomLabel = document.getElementById('zoomLevel');
         if (zoomLabel) zoomLabel.textContent = Math.round(this.zoom * 100) + '%';
     }
 
     updateTransform() {
         const workspace = document.getElementById('workspaceArea');
+        if (workspace) {
+            workspace.style.width = `${this.workspaceWidth}px`;
+            workspace.style.minWidth = `${this.workspaceWidth}px`;
+            workspace.style.height = `${this.workspaceHeight}px`;
+        }
+        this.clampPanToBounds();
         workspace.style.transform = `translate(${this.panX}px, ${this.panY}px) scale(${this.zoom})`;
         workspace.style.transformOrigin = 'top left';
+        this.updateBoundaryMarkers();
     }
 
     centerWorkspace() {
@@ -1289,7 +1448,8 @@ class FactoryDesigner {
         const container = workspace.parentElement;
         if (!container) return;
         
-        const wsWidth = 8000, wsHeight = 6000;
+        const wsWidth = this.workspaceWidth;
+        const wsHeight = this.workspaceHeight;
         const containerWidth = container.offsetWidth || window.innerWidth;
         const containerHeight = container.offsetHeight || window.innerHeight;
         
@@ -1401,6 +1561,7 @@ class FactoryDesigner {
                     connectionsInfo.push({
                         from: fromEq.equipment.name,
                         to: toEq.equipment.name,
+                        conveyor: conn.conveyorName || null,
                         throughput: throughput
                     });
                 }
@@ -1442,6 +1603,16 @@ class FactoryDesigner {
             this.connectionManager.showNotification(message, type);
         }
     }
+}
+
+function mountHowToUseContent() {
+    const tpl = document.getElementById('howToUseTemplate');
+    if (!tpl) return;
+    const html = tpl.innerHTML;
+    const modalBody = document.getElementById('howToUseModalBody');
+    const instructionContent = document.getElementById('instructionContent');
+    if (modalBody) modalBody.innerHTML = html;
+    if (instructionContent) instructionContent.innerHTML = html;
 }
 
 function toggleInstruction() {
@@ -1548,7 +1719,8 @@ function viewCalculations() {
                     <ul style="list-style: none; padding: 0; margin: 0;">
                         ${calc.connections_info.map((conn, idx) => `
                             <li style="padding: 0.5rem; background: white; margin-bottom: 0.5rem; border-radius: 4px; border-left: 3px solid #28a745;">
-                                <strong>${idx + 1}.</strong> ${conn.from} → ${conn.to} 
+                                <strong>${idx + 1}.</strong> ${conn.from} → ${conn.to}
+                                ${conn.conveyor ? `<br><span style="color:#e67e22;font-size:0.85em;"><i class="fas fa-arrows-alt-h"></i> ${conn.conveyor}</span>` : ''}
                                 <span style="color: #666; font-size: 0.9em;">(${conn.throughput.toFixed(2)} м³/смену)</span>
                             </li>
                         `).join('')}
@@ -1565,6 +1737,22 @@ function viewCalculations() {
                         <strong>⚠ Соединений нет.</strong> Для создания производственной линии рекомендуется связать станки между собой.
                     </p>
                 </div>
+            </div>
+        `;
+    }
+
+    if (calc.conveyor_list && calc.conveyor_list.length > 0) {
+        html += `
+            <div class="calc-section" style="margin-bottom: 2rem;">
+                <h4 style="margin-bottom: 1rem; color: #5d4e37;">Конвейеры на связях</h4>
+                <ul style="list-style: none; padding: 0;">
+                    ${calc.conveyor_list.map((cv, idx) => `
+                        <li style="padding: 0.5rem; background: #ffedd5; margin-bottom: 0.5rem; border-radius: 4px; border-left: 3px solid #e67e22;">
+                            <strong>${idx + 1}. ${cv.name}</strong><br>
+                            <span style="font-size:0.9em;color:#666;">${cv.from} → ${cv.to}</span>
+                        </li>
+                    `).join('')}
+                </ul>
             </div>
         `;
     }
@@ -1597,383 +1785,327 @@ function viewCalculations() {
     document.getElementById('calculationsViewModal').style.display = 'block';
 }
 
-// Функция для генерации и скачивания PDF (клиентская версия)
-// Используем html2canvas для конвертации HTML в изображение, затем в PDF
-async function downloadPDF() {
-    if (!window.lastCalculations) {
-        alert('Нет данных для экспорта. Сначала выполните расчет.');
-        return;
+function escapeReportHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function pdfSectionTitle(title) {
+    return `<h2 style="font-size:13px;color:#8b6f47;margin:0 0 6px;border-bottom:1px solid #8b6f47;padding-bottom:3px;font-weight:700;">${escapeReportHtml(title)}</h2>`;
+}
+
+function pdfTableHeader(cells) {
+    return `<tr style="background:#8b6f47;color:white;">${cells.map(cell => `<th style="padding:3px 5px;border:1px solid #ccc;font-size:8.5px;font-weight:600;">${cell}</th>`).join('')}</tr>`;
+}
+
+function pdfTableRow(cells, idx, alignments = []) {
+    const bg = idx % 2 === 0 ? '#fff' : '#f8f9fa';
+    return `<tr style="background:${bg};">${cells.map((cell, i) => {
+        const align = alignments[i] || 'left';
+        return `<td style="padding:2px 4px;border:1px solid #ddd;text-align:${align};word-break:break-word;overflow-wrap:anywhere;vertical-align:top;font-size:8.5px;line-height:1.25;">${cell}</td>`;
+    }).join('')}</tr>`;
+}
+
+const PDF_A4_WIDTH_PX = 794;
+const PDF_PADDING_PX = 22;
+const PDF_PAGE_MAX_HEIGHT_PX = Math.floor(((297 - 14) / 25.4) * 96);
+const PDF_FONT_STACK = "'Segoe UI', Arial, 'Helvetica Neue', sans-serif";
+
+function pdfWrapSection(inner) {
+    return `<div class="pdf-section" style="margin-bottom:8px;">${inner}</div>`;
+}
+
+function pdfTableOpen(colWidths = []) {
+    const cols = colWidths.length
+        ? `<colgroup>${colWidths.map(w => `<col style="width:${w}">`).join('')}</colgroup>`
+        : '';
+    return `<table style="width:100%;border-collapse:collapse;table-layout:fixed;">${cols}`;
+}
+
+function pdfPageFooter(pageNum, totalPages) {
+    if (totalPages <= 1) return '';
+    return `<div style="margin-top:6px;padding-top:4px;border-top:1px solid #e0e0e0;text-align:center;font-size:8px;color:#888;font-family:${PDF_FONT_STACK};">Страница ${pageNum} из ${totalPages}</div>`;
+}
+
+function chunkRows(rows, size) {
+    const chunks = [];
+    for (let i = 0; i < rows.length; i += size) {
+        chunks.push(rows.slice(i, i + size));
     }
-    
+    return chunks;
+}
+
+function buildPdfReportSections(calc) {
+    const hasPriceRequest = calc.price_warnings && calc.price_warnings.length > 0;
+    const totalCostDisplay = hasPriceRequest
+        ? 'Цена по запросу'
+        : `${Number(calc.total_cost || 0).toLocaleString('ru-RU')} руб`;
+    const totalWithInstallDisplay = hasPriceRequest
+        ? 'Цена по запросу'
+        : `${Number(calc.total_cost_with_installation || 0).toLocaleString('ru-RU')} руб`;
+    const sections = [];
+
+    sections.push(pdfWrapSection(`
+        <div style="text-align:center;margin-bottom:4px;">
+            <h1 style="font-size:15px;color:#5d4e37;margin:0 0 4px;font-family:${PDF_FONT_STACK};">Отчёт о расчёте производственного цеха</h1>
+            <p style="font-size:9px;color:#666;margin:0;font-family:${PDF_FONT_STACK};">Дата: ${escapeReportHtml(new Date().toLocaleString('ru-RU'))}</p>
+        </div>
+    `));
+
+    sections.push(pdfWrapSection(`
+        ${pdfSectionTitle('Основные показатели')}
+        ${pdfTableOpen(['58%', '42%'])}
+            ${pdfTableHeader(['<span style="text-align:left;display:block;">Показатель</span>', '<span style="text-align:right;display:block;">Значение</span>'])}
+            ${pdfTableRow(['Производительность линии', `${Number(calc.final_production || 0).toFixed(2)} м³/смену`], 0, ['left', 'right'])}
+            ${pdfTableRow(['Энергопотребление', `${Number(calc.total_energy || 0).toFixed(2)} кВт`], 1, ['left', 'right'])}
+            ${pdfTableRow(['Стоимость оборудования', totalCostDisplay], 2, ['left', 'right'])}
+            ${pdfTableRow(['Стоимость установки', `${Number(calc.installation_cost_total || 0).toLocaleString('ru-RU')} руб`], 3, ['left', 'right'])}
+            ${pdfTableRow(['Общая стоимость', totalWithInstallDisplay], 4, ['left', 'right'])}
+            ${pdfTableRow(['Площадь', `${Number(calc.total_area || 0).toFixed(2)} м²`], 5, ['left', 'right'])}
+            ${pdfTableRow(['Площадь с проходами', `${Math.round(Number(calc.recommended_area || calc.total_area * 1.5))} м²`], 6, ['left', 'right'])}
+            ${pdfTableRow(['Количество станков', String(calc.equipment_count || 0)], 7, ['left', 'right'])}
+            ${pdfTableRow(['Соединений', calc.connections_count > 0 ? String(calc.connections_count) : 'Нет'], 8, ['left', 'right'])}
+            ${calc.conveyor_count ? pdfTableRow(['Конвейеров', String(calc.conveyor_count)], 9, ['left', 'right']) : ''}
+        </table>
+    `));
+
+    if (calc.bottleneck_equipment && calc.bottleneck_equipment !== 'Нет') {
+        sections.push(pdfWrapSection(`
+            ${pdfSectionTitle('Узкое место производства')}
+            <p style="margin:0;color:#856404;font-size:8.5px;line-height:1.3;font-family:${PDF_FONT_STACK};"><strong>${escapeReportHtml(calc.bottleneck_equipment)}</strong> — ${Number(calc.bottleneck_productivity || 0).toFixed(2)} м³/смену</p>
+        `));
+    }
+
+    if (calc.connections_info && calc.connections_info.length > 0) {
+        const connRows = calc.connections_info.map((conn, idx) => pdfTableRow([
+            String(idx + 1),
+            escapeReportHtml(conn.from),
+            escapeReportHtml(conn.to),
+            escapeReportHtml(conn.conveyor || '—'),
+            Number(conn.throughput || 0).toFixed(2)
+        ], idx, ['center', 'left', 'left', 'left', 'right']));
+        chunkRows(connRows, 14).forEach((rows, chunkIdx, arr) => {
+            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
+            sections.push(pdfWrapSection(`
+                ${pdfSectionTitle(`Связи между станками${suffix}`)}
+                ${pdfTableOpen(['6%', '24%', '24%', '28%', '18%'])}
+                    ${pdfTableHeader(['<span style="text-align:center;display:block;">№</span>', 'От', 'К', 'Конвейер', '<span style="text-align:right;display:block;">м³/смену</span>'])}
+                    ${rows.join('')}
+                </table>
+            `));
+        });
+    } else if ((calc.equipment_count || 0) > 1) {
+        sections.push(pdfWrapSection(`
+            ${pdfSectionTitle('Связи между станками')}
+            <p style="margin:0;color:#856404;font-size:8.5px;font-family:${PDF_FONT_STACK};">Соединений нет. Рекомендуется связать станки для расчёта линии.</p>
+        `));
+    }
+
+    if (calc.conveyor_list && calc.conveyor_list.length > 0) {
+        const cvRows = calc.conveyor_list.map((cv, idx) => pdfTableRow([
+            String(idx + 1),
+            escapeReportHtml(cv.name),
+            `${escapeReportHtml(cv.from)} → ${escapeReportHtml(cv.to)}`,
+            Number(cv.power || 0).toFixed(2),
+            cv.cost > 0 ? Number(cv.cost).toLocaleString('ru-RU') : '—'
+        ], idx, ['center', 'left', 'left', 'right', 'right']));
+        chunkRows(cvRows, 12).forEach((rows, chunkIdx, arr) => {
+            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
+            sections.push(pdfWrapSection(`
+                ${pdfSectionTitle(`Конвейеры на связях${suffix}`)}
+                ${pdfTableOpen(['6%', '30%', '38%', '12%', '14%'])}
+                    ${pdfTableHeader(['<span style="text-align:center;display:block;">№</span>', 'Конвейер', 'Маршрут', '<span style="text-align:right;display:block;">кВт</span>', '<span style="text-align:right;display:block;">руб</span>'])}
+                    ${rows.join('')}
+                </table>
+            `));
+        });
+    }
+
+    if (calc.input_materials && Object.keys(calc.input_materials).length > 0) {
+        const matRows = Object.entries(calc.input_materials).map(([name, qty], idx) => pdfTableRow([
+            escapeReportHtml(name),
+            Number(qty || 0).toFixed(2)
+        ], idx, ['left', 'right']));
+        chunkRows(matRows, 18).forEach((rows, chunkIdx, arr) => {
+            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
+            sections.push(pdfWrapSection(`
+                ${pdfSectionTitle(`Потребление сырья (м³/смену)${suffix}`)}
+                ${pdfTableOpen(['68%', '32%'])}
+                    ${pdfTableHeader(['Материал', '<span style="text-align:right;display:block;">Количество</span>'])}
+                    ${rows.join('')}
+                </table>
+            `));
+        });
+    }
+
+    if (calc.output_materials && Object.keys(calc.output_materials).length > 0) {
+        const outRows = Object.entries(calc.output_materials).map(([name, qty], idx) => pdfTableRow([
+            escapeReportHtml(name),
+            Number(qty || 0).toFixed(2)
+        ], idx, ['left', 'right']));
+        chunkRows(outRows, 18).forEach((rows, chunkIdx, arr) => {
+            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
+            sections.push(pdfWrapSection(`
+                ${pdfSectionTitle(`Выпуск продукции (м³/смену)${suffix}`)}
+                ${pdfTableOpen(['68%', '32%'])}
+                    ${pdfTableHeader(['Продукция', '<span style="text-align:right;display:block;">Количество</span>'])}
+                    ${rows.join('')}
+                </table>
+            `));
+        });
+    }
+
+    if (calc.equipment_list && calc.equipment_list.length > 0) {
+        const eqRows = calc.equipment_list.map((eq, idx) => pdfTableRow([
+            String(idx + 1),
+            escapeReportHtml(eq.name),
+            `${Number(eq.production || 0).toFixed(2)} м³/смену`,
+            Number(eq.power || 0).toFixed(2),
+            Number(eq.cost || 0) > 0 ? Number(eq.cost).toLocaleString('ru-RU') : 'По запросу'
+        ], idx, ['center', 'left', 'right', 'right', 'right']));
+        chunkRows(eqRows, 14).forEach((rows, chunkIdx, arr) => {
+            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
+            sections.push(pdfWrapSection(`
+                ${pdfSectionTitle(`Оборудование${suffix}`)}
+                ${pdfTableOpen(['6%', '34%', '22%', '14%', '24%'])}
+                    ${pdfTableHeader(['<span style="text-align:center;display:block;">№</span>', 'Станок', '<span style="text-align:right;display:block;">Производительность</span>', '<span style="text-align:right;display:block;">кВт</span>', '<span style="text-align:right;display:block;">руб</span>'])}
+                    ${rows.join('')}
+                </table>
+            `));
+        });
+    }
+
+    if (hasPriceRequest) {
+        sections.push(pdfWrapSection(`
+            ${pdfSectionTitle('Цены требуют уточнения')}
+            ${calc.price_warnings.map(w => `<p style="margin:2px 0;color:#dc3545;font-size:8.5px;font-family:${PDF_FONT_STACK};">• ${escapeReportHtml(w.name)}: ${escapeReportHtml(w.price)}</p>`).join('')}
+        `));
+    }
+
+    if (calc.roi_days > 0 && !hasPriceRequest) {
+        sections.push(pdfWrapSection(`
+            <p style="font-size:8.5px;color:#666;margin:0;font-family:${PDF_FONT_STACK};">Ориентировочная окупаемость: ${Number(calc.roi_days).toLocaleString('ru-RU')} дн.</p>
+        `));
+    }
+
+    return sections;
+}
+
+function paginatePdfSections(sections) {
+    const measureBox = document.createElement('div');
+    measureBox.style.cssText = `position:fixed;left:0;top:0;transform:translateX(-200vw);width:${PDF_A4_WIDTH_PX}px;padding:${PDF_PADDING_PX}px;box-sizing:border-box;visibility:hidden;pointer-events:none;`;
+    document.body.appendChild(measureBox);
+
+    const measure = (html) => {
+        measureBox.innerHTML = html;
+        return measureBox.offsetHeight;
+    };
+
+    const pages = [];
+    let current = [];
+    let currentHeight = 0;
+
+    sections.forEach(section => {
+        const sectionHeight = measure(section);
+        if (currentHeight + sectionHeight > PDF_PAGE_MAX_HEIGHT_PX && current.length > 0) {
+            pages.push(current.join(''));
+            current = [];
+            currentHeight = 0;
+        }
+        current.push(section);
+        currentHeight += sectionHeight;
+    });
+
+    if (current.length) {
+        pages.push(current.join(''));
+    }
+
+    document.body.removeChild(measureBox);
+    return pages.length ? pages : [''];
+}
+
+async function renderPdfPageCanvas(pageHtml, pageNum, totalPages) {
+    const tempDiv = document.createElement('div');
+    tempDiv.style.cssText = `position:fixed;left:0;top:0;transform:translateX(-200vw);width:${PDF_A4_WIDTH_PX}px;padding:${PDF_PADDING_PX}px;background:#ffffff;font-family:${PDF_FONT_STACK};box-sizing:border-box;color:#1d3557;font-size:9px;line-height:1.3;`;
+    tempDiv.innerHTML = pageHtml + pdfPageFooter(pageNum, totalPages);
+    document.body.appendChild(tempDiv);
+
     try {
-        // Параметры для формата A4
-        // A4 формат: 210mm = 794px (при 96 DPI)
-        const a4WidthPx = 794;
-        const marginPx = 57; // 15mm = ~57px при 96 DPI
-        
-        // Создаем временный контейнер с HTML содержимым для формата A4
-        const calc = window.lastCalculations;
-        const tempDiv = document.createElement('div');
-        tempDiv.style.position = 'absolute';
-        tempDiv.style.left = '-9999px';
-        tempDiv.style.width = `${a4WidthPx}px`;
-        tempDiv.style.minWidth = `${a4WidthPx}px`;
-        tempDiv.style.maxWidth = `${a4WidthPx}px`;
-        tempDiv.style.padding = `${marginPx}px`;
-        tempDiv.style.backgroundColor = 'white';
-        tempDiv.style.fontFamily = 'Arial, sans-serif';
-        tempDiv.style.boxSizing = 'border-box';
-        
-        // Определяем, есть ли цены по запросу
-        const hasPriceRequest = calc.price_warnings && calc.price_warnings.length > 0;
-        const totalCostDisplay = hasPriceRequest ? 'Цена по запросу' : `${calc.total_cost.toLocaleString()} руб`;
-        
-        let html = `
-            <div style="text-align: center; margin-bottom: 30px;">
-                <h1 style="font-size: 24px; color: #5d4e37; margin-bottom: 10px;">Отчет о расчете производственного цеха</h1>
-                <p style="font-size: 12px; color: #666;">Дата: ${new Date().toLocaleString('ru-RU')}</p>
-            </div>
-            
-            <div style="margin-bottom: 30px; padding-top: 10px; page-break-inside: avoid;">
-                <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">Основные показатели</h2>
-                <table style="width: 100%; border-collapse: collapse; margin-bottom: 20px; page-break-inside: avoid;">
-                    <tr style="background: #8b6f47; color: white;">
-                        <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Показатель</th>
-                        <th style="padding: 10px; text-align: right; border: 1px solid #ddd;">Значение</th>
-                    </tr>
-                    <tr style="background: #fff;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Производительность</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${calc.final_production.toFixed(2)} м³/смену</td>
-                    </tr>
-                    <tr style="background: #f8f9fa;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Общее энергопотребление</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${calc.total_energy.toFixed(2)} кВт</td>
-                    </tr>
-                    <tr style="background: #fff;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Общая стоимость</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${totalCostDisplay}</td>
-                    </tr>
-                    <tr style="background: #f8f9fa;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Общая площадь</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${calc.total_area.toFixed(2)} м²</td>
-                    </tr>
-                </table>
-            </div>
-            
-            <div style="margin-bottom: 30px; padding-top: 10px; page-break-inside: avoid;">
-                <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">Детализация</h2>
-                <table style="width: 100%; border-collapse: collapse; page-break-inside: avoid;">
-                    <tr style="background: #8b6f47; color: white;">
-                        <th style="padding: 10px; text-align: left; border: 1px solid #ddd;">Параметр</th>
-                        <th style="padding: 10px; text-align: right; border: 1px solid #ddd;">Значение</th>
-                    </tr>
-        `;
-        
-        
-        if (calc.installation_cost_total > 0) {
-            html += `
-                    <tr style="background: #f8f9fa;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Цена установки</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${calc.installation_cost_total.toFixed(2)} руб</td>
-                    </tr>
-            `;
-        }
-        
-        html += `
-                    <tr style="background: #fff;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Потребление электричества</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${calc.total_energy.toFixed(2)} кВт</td>
-                    </tr>
-        `;
-        
-        if (calc.bottleneck_equipment && calc.bottleneck_equipment !== 'Нет') {
-            html += `
-                    <tr style="background: #f8f9fa;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Узкое место</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${calc.bottleneck_equipment} (${calc.bottleneck_productivity.toFixed(2)} м³/смену)</td>
-                    </tr>
-            `;
-        }
-        
-        html += `
-                    <tr style="background: #fff;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Количество станков</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${calc.equipment_count}</td>
-                    </tr>
-        `;
-        
-        html += `
-                    <tr style="background: #f8f9fa;">
-                        <td style="padding: 8px; border: 1px solid #ddd;">Количество соединений</td>
-                        <td style="padding: 8px; text-align: right; border: 1px solid #ddd;">${calc.connections_count > 0 ? calc.connections_count : 'Нет соединений'}</td>
-                    </tr>
-        `;
-        
-        html += `
-                </table>
-            </div>
-        `;
-        
-        
-        html += `
-                </table>
-            </div>
-        `;
-        
-        // Связи между станками (отдельный раздел)
-        if (calc.connections_info && calc.connections_info.length > 0) {
-            html += `
-                <div style="margin-bottom: 30px; padding-top: 10px; page-break-inside: avoid;">
-                    <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">Связи между станками</h2>
-                    <div style="padding: 10px; background: #d4edda; border-left: 4px solid #28a745; border-radius: 4px; margin-bottom: 15px;">
-                        <p style="margin: 0; color: #155724; font-weight: bold;">✓ Найдено ${calc.connections_count} соединений</p>
-                    </div>
-                    <table style="width: 100%; border-collapse: collapse; page-break-inside: avoid;">
-                        <tr style="background: #8b6f47; color: white;">
-                            <th style="padding: 8px; text-align: center; border: 1px solid #ddd;">№</th>
-                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">От</th>
-                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">К</th>
-                            <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Пропускная способность (м³/смену)</th>
-                        </tr>
-            `;
-            calc.connections_info.forEach((conn, idx) => {
-                html += `
-                        <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">
-                            <td style="padding: 6px; border: 1px solid #ddd; text-align: center;">${idx + 1}</td>
-                            <td style="padding: 6px; border: 1px solid #ddd;">${conn.from}</td>
-                            <td style="padding: 6px; border: 1px solid #ddd;">${conn.to}</td>
-                            <td style="padding: 6px; text-align: right; border: 1px solid #ddd;">${conn.throughput.toFixed(2)}</td>
-                        </tr>
-                `;
-            });
-            html += `</table></div>`;
-        } else if (calc.equipment_count > 1) {
-            html += `
-                <div style="margin-bottom: 30px; padding-top: 10px; page-break-inside: avoid;">
-                    <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">Связи между станками</h2>
-                    <div style="padding: 15px; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
-                        <p style="margin: 0; color: #856404;"><strong>⚠ Соединений нет.</strong> Для создания производственной линии рекомендуется связать станки между собой.</p>
-                    </div>
-                </div>
-            `;
-        } else if (calc.equipment_count === 1) {
-            html += `
-                <div style="margin-bottom: 30px; padding-top: 10px; page-break-inside: avoid;">
-                    <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">Связи между станками</h2>
-                    <div style="padding: 15px; background: #e2e3e5; border-left: 4px solid #6c757d; border-radius: 4px;">
-                        <p style="margin: 0; color: #383d41;">Для создания соединений необходимо разместить минимум 2 станка.</p>
-                    </div>
-                </div>
-            `;
-        }
-        
-        // Потоки материалов (если есть связи)
-        if (calc.connections_info && calc.connections_info.length > 0) {
-            html += `
-                <div style="margin-bottom: 30px; padding-top: 10px; page-break-inside: avoid;">
-                    <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">Потоки материалов</h2>
-                    <table style="width: 100%; border-collapse: collapse;">
-                        <tr style="background: #8b6f47; color: white;">
-                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">От</th>
-                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">К</th>
-                            <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Пропускная способность (м³/смену)</th>
-                        </tr>
-            `;
-            calc.connections_info.forEach((conn, idx) => {
-                html += `
-                        <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">
-                            <td style="padding: 6px; border: 1px solid #ddd;">${conn.from}</td>
-                            <td style="padding: 6px; border: 1px solid #ddd;">${conn.to}</td>
-                            <td style="padding: 6px; text-align: right; border: 1px solid #ddd;">${conn.throughput.toFixed(2)}</td>
-                        </tr>
-                `;
-            });
-            html += `</table></div>`;
-        }
-        
-        if (calc.input_materials && Object.keys(calc.input_materials).length > 0) {
-            const materials = Object.entries(calc.input_materials);
-            const rowsPerPage = 20; // Количество строк на страницу
-            const totalPages = Math.ceil(materials.length / rowsPerPage);
-            
-            for (let page = 0; page < totalPages; page++) {
-                const startIdx = page * rowsPerPage;
-                const endIdx = Math.min(startIdx + rowsPerPage, materials.length);
-                const pageData = materials.slice(startIdx, endIdx);
-                
-                html += `
-                    <div style="margin-bottom: 30px; ${page > 0 ? 'page-break-before: always; padding-top: 20px;' : ''} page-break-inside: avoid;">
-                        <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">
-                            Потребление сырья (м³/смену) ${totalPages > 1 ? `(стр. ${page + 1} из ${totalPages})` : ''}
-                        </h2>
-                        <table style="width: 100%; border-collapse: collapse; page-break-inside: avoid;">
-                            <tr style="background: #8b6f47; color: white;">
-                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Материал</th>
-                                <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Количество (м³/смену)</th>
-                            </tr>
-                `;
-                pageData.forEach(([name, qty], idx) => {
-                    html += `
-                        <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">
-                            <td style="padding: 6px; border: 1px solid #ddd;">${name}</td>
-                            <td style="padding: 6px; text-align: right; border: 1px solid #ddd;">${qty.toFixed(2)}</td>
-                        </tr>
-                    `;
-                });
-                html += `</table></div>`;
-            }
-        }
-        
-        if (calc.output_materials && Object.keys(calc.output_materials).length > 0) {
-            const materials = Object.entries(calc.output_materials);
-            const rowsPerPage = 20; // Количество строк на страницу
-            const totalPages = Math.ceil(materials.length / rowsPerPage);
-            
-            for (let page = 0; page < totalPages; page++) {
-                const startIdx = page * rowsPerPage;
-                const endIdx = Math.min(startIdx + rowsPerPage, materials.length);
-                const pageData = materials.slice(startIdx, endIdx);
-                
-                html += `
-                    <div style="margin-bottom: 30px; ${page > 0 ? 'page-break-before: always; padding-top: 20px;' : ''} page-break-inside: avoid;">
-                        <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">
-                            Выпуск продукции (м³/смену) ${totalPages > 1 ? `(стр. ${page + 1} из ${totalPages})` : ''}
-                        </h2>
-                        <table style="width: 100%; border-collapse: collapse; page-break-inside: avoid;">
-                            <tr style="background: #8b6f47; color: white;">
-                                <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Продукция</th>
-                                <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Количество (м³/смену)</th>
-                            </tr>
-                `;
-                pageData.forEach(([name, qty], idx) => {
-                    html += `
-                        <tr style="background: ${idx % 2 === 0 ? '#fff' : '#d4edda'};">
-                            <td style="padding: 6px; border: 1px solid #ddd;">${name}</td>
-                            <td style="padding: 6px; text-align: right; border: 1px solid #ddd;">${qty.toFixed(2)}</td>
-                        </tr>
-                    `;
-                });
-                html += `</table></div>`;
-            }
-        }
-        
-        // Детальная информация по оборудованию
-        if (calc.equipment_list && calc.equipment_list.length > 0) {
-            html += `
-                <div style="margin-bottom: 30px; padding-top: 10px; page-break-inside: avoid;">
-                    <h2 style="font-size: 18px; color: #8b6f47; margin-bottom: 15px; border-bottom: 2px solid #8b6f47; padding-bottom: 5px;">Детальная информация по оборудованию</h2>
-                    <table style="width: 100%; border-collapse: collapse; page-break-inside: avoid;">
-                        <tr style="background: #8b6f47; color: white;">
-                            <th style="padding: 8px; text-align: left; border: 1px solid #ddd;">Станок</th>
-                            <th style="padding: 8px; text-align: right; border: 1px solid #ddd;">Стоимость (руб)</th>
-                        </tr>
-            `;
-            calc.equipment_list.forEach((eq, idx) => {
-                html += `
-                        <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">
-                            <td style="padding: 6px; border: 1px solid #ddd;">${eq.name}</td>
-                            <td style="padding: 6px; text-align: right; border: 1px solid #ddd;">${eq.cost.toLocaleString()}</td>
-                        </tr>
-                `;
-            });
-            html += `</table></div>`;
-        }
-        
-        // Предупреждения о ценах
-        if (calc.price_warnings && calc.price_warnings.length > 0) {
-            html += `
-                <div style="margin-bottom: 30px; padding: 15px; background: #fff; border-left: 4px solid #dc3545;">
-                    <h3 style="font-size: 16px; color: #dc3545; margin-bottom: 10px; font-weight: bold;">ВНИМАНИЕ! Цены требуют уточнения:</h3>
-            `;
-            calc.price_warnings.forEach(warning => {
-                html += `
-                    <p style="margin: 5px 0; color: #dc3545;">• ${warning.name}: ${warning.price}</p>
-                `;
-            });
-            html += `</div>`;
-        }
-        
-        // Площадь с учетом проходов
-        if (calc.recommended_area) {
-            html += `
-                <div style="margin-bottom: 30px;">
-                    <p style="font-size: 14px; color: #666;">Площадь с учетом проходов: ${Math.round(calc.recommended_area)} м²</p>
-                </div>
-            `;
-        }
-        
-        tempDiv.innerHTML = html;
-        document.body.appendChild(tempDiv);
-        
-        // Конвертируем HTML в canvas для формата A4
-        const canvas = await html2canvas(tempDiv, {
-            scale: 2, // Увеличиваем масштаб для лучшего качества
+        return await html2canvas(tempDiv, {
+            scale: 1.6,
             useCORS: true,
             logging: false,
             backgroundColor: '#ffffff',
-            width: a4WidthPx,
+            width: PDF_A4_WIDTH_PX,
             height: tempDiv.scrollHeight,
-            windowWidth: a4WidthPx,
+            windowWidth: PDF_A4_WIDTH_PX,
             windowHeight: tempDiv.scrollHeight
         });
-        
-        // Удаляем временный элемент
+    } finally {
         document.body.removeChild(tempDiv);
-        
-        // Создаем PDF из canvas с правильным разбиением на страницы A4
-        const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF('p', 'mm', 'a4');
-        
-        // Размеры A4 в миллиметрах
-        const pageWidth = 210; // Ширина A4
-        const pageHeight = 297; // Высота A4
-        const margin = 15; // Отступы со всех сторон
-        
-        // Вычисляем размеры изображения для вставки
-        const imgWidth = pageWidth - (margin * 2); // Ширина с учетом отступов
-        const imgHeight = (canvas.height * imgWidth) / canvas.width; // Пропорциональная высота
-        
-        // Конвертируем canvas в изображение
-        const imgData = canvas.toDataURL('image/png', 1.0);
-        
-        // Разбиваем изображение на страницы
-        let heightLeft = imgHeight;
-        let position = 0;
-        let pageNumber = 1;
-        
-        // Добавляем первую страницу
-        pdf.addImage(imgData, 'PNG', margin, margin, imgWidth, imgHeight);
-        heightLeft -= (pageHeight - margin * 2);
-        
-        // Добавляем остальные страницы если контент не помещается на одну страницу
-        while (heightLeft > 0) {
-            position = heightLeft - imgHeight;
+    }
+}
+
+async function renderHtmlReportToPdf(sections) {
+    if (!window.jspdf?.jsPDF) {
+        throw new Error('Библиотека jsPDF не загружена');
+    }
+    if (typeof html2canvas !== 'function') {
+        throw new Error('Библиотека html2canvas не загружена');
+    }
+
+    const pages = paginatePdfSections(sections);
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF('p', 'mm', 'a4');
+    const pageWidth = 210;
+    const pageHeight = 297;
+    const margin = 8;
+    const imgWidth = pageWidth - margin * 2;
+    const totalPages = pages.length;
+
+    for (let i = 0; i < pages.length; i++) {
+        const canvas = await renderPdfPageCanvas(pages[i], i + 1, totalPages);
+        if (i > 0) {
             pdf.addPage();
-            pdf.addImage(imgData, 'PNG', margin, margin + position, imgWidth, imgHeight);
-            heightLeft -= (pageHeight - margin * 2);
-            pageNumber++;
         }
-        
-        // Добавляем номера страниц
-        const totalPages = pdf.internal.getNumberOfPages();
-        for (let i = 1; i <= totalPages; i++) {
-            pdf.setPage(i);
-            pdf.setFontSize(10);
-            pdf.setTextColor(128, 128, 128);
-            pdf.text(
-                `Страница ${i} из ${totalPages}`,
-                pageWidth / 2,
-                pageHeight - 10,
-                { align: 'center' }
-            );
-        }
-        
-        // Сохраняем PDF
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+        const maxHeight = pageHeight - margin * 2;
+        const drawHeight = Math.min(imgHeight, maxHeight);
+        const drawWidth = imgHeight > maxHeight ? (canvas.width * drawHeight) / canvas.height : imgWidth;
+        pdf.addImage(canvas.toDataURL('image/png', 1.0), 'PNG', margin, margin, drawWidth, drawHeight);
+    }
+
+    return pdf;
+}
+
+function buildPdfReportHtml(calc) {
+    return buildPdfReportSections(calc).join('');
+}
+
+// Функция для генерации и скачивания PDF (клиентская версия)
+async function downloadPDF() {
+    if (!window.lastCalculations) {
+        alert('Нет данных для экспорта. Сначала выполните расчёт.');
+        return;
+    }
+
+    const designer = window.factoryDesigner;
+    if (designer?.showNotification) {
+        designer.showNotification('Формирование PDF…', 'info');
+    }
+
+    try {
+        closeCalculationChoiceModal();
+        const sections = buildPdfReportSections(window.lastCalculations);
+        const pdf = await renderHtmlReportToPdf(sections);
         const filename = `расчет_${new Date().toISOString().split('T')[0]}.pdf`;
         pdf.save(filename);
-        
-        if (window.factoryDesigner && window.factoryDesigner.showNotification) {
-            window.factoryDesigner.showNotification('PDF файл скачан', 'success');
+
+        if (designer?.showNotification) {
+            designer.showNotification('PDF файл скачан', 'success');
         }
     } catch (error) {
         console.error('Ошибка генерации PDF:', error);
@@ -1986,6 +2118,7 @@ window.downloadPDF = downloadPDF;
 
 let factoryDesignerInstance = null;
 document.addEventListener('DOMContentLoaded', async () => {
+    mountHowToUseContent();
     factoryDesignerInstance = new FactoryDesigner();
     window.factoryDesigner = factoryDesignerInstance;
     if (window.LeskomConfiguratorIntegration?.attach) {

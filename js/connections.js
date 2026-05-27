@@ -1,84 +1,150 @@
-// Модуль для работы с соединениями между станками (standalone версия)
+// Связи между станками с выбором конвейера из каталога
 class ConnectionManager {
     constructor(workspace) {
         this.workspace = workspace;
         this.connections = [];
         this.selectedStations = [];
+        this.designer = null;
+        this.pendingConnection = null;
+        this.lastConveyorCatalogId = window.CatalogMeta?.DEFAULT_CONVEYOR_ID || 48;
     }
-    
+
+    setDesigner(designer) {
+        this.designer = designer;
+    }
+
     getStationElementById(stationId) {
-        // stationId — это ID экземпляра на поле (placementId)
         return this.workspace.querySelector(`[data-placement-id="${stationId}"]`);
     }
-    
-    canConnect(stationId1, stationId2) {
+
+    getConveyorList() {
+        const all = this.designer?.allEquipment || [];
+        return all.filter(eq => eq.catalogType === 'conveyor');
+    }
+
+    getConveyorById(catalogId) {
+        return (this.designer?.allEquipment || []).find(eq => eq.id === catalogId) || null;
+    }
+
+    getPlacementMeta(stationId) {
+        const el = this.getStationElementById(stationId);
+        if (!el) return null;
+        return {
+            input_type: el.dataset.inputType || '',
+            output_type: el.dataset.outputType || '',
+            name: (el.querySelector('h4')?.textContent || '').trim()
+        };
+    }
+
+    canConnect(stationId1, stationId2, options = {}) {
         if (stationId1 === stationId2) {
             return { ok: false, message: 'Нельзя соединить станок сам с собой' };
         }
-        
+
         const el1 = this.getStationElementById(stationId1);
         const el2 = this.getStationElementById(stationId2);
         if (!el1 || !el2) {
             return { ok: false, message: 'Один из станков не найден на рабочей области' };
         }
-        
-        const row1 = parseInt(el1.dataset.equipmentRow || '0', 10);
-        const row2 = parseInt(el2.dataset.equipmentRow || '0', 10);
-        const safeRow1 = Number.isFinite(row1) ? row1 : 0;
-        const safeRow2 = Number.isFinite(row2) ? row2 : 0;
-        const name1 = (el1.querySelector('h4')?.textContent || '').trim();
-        const name2 = (el2.querySelector('h4')?.textContent || '').trim();
-        
-        // Ограничение: станки из 1 ряда нельзя соединять друг с другом (но можно соединять с другими рядами)
-        if (safeRow1 === 1 && safeRow2 === 1) {
-            return { ok: false, message: `Нельзя соединить: оба станка из 1 ряда (ряды: ${safeRow1} и ${safeRow2}) — "${name1}" ↔ "${name2}"` };
+
+        if (el1.dataset.catalogType === 'conveyor' || el2.dataset.catalogType === 'conveyor') {
+            return { ok: false, message: 'Конвейер размещается на связи, а не как отдельный станок' };
         }
-        
+
+        // Совместимость типов отключена по требованию: связь разрешается между любыми станками.
+
         return { ok: true };
     }
 
     selectStation(element) {
         const placementId = parseInt(element.dataset.placementId, 10);
-        if (isNaN(placementId)) {
-            console.error('Неверный ID экземпляра при выборе станции:', element.dataset.placementId);
-            return;
-        }
+        if (isNaN(placementId)) return;
+
         const isAlreadySelected = this.selectedStations.some(s => s.element === element);
-        
         if (isAlreadySelected) {
             this.selectedStations = this.selectedStations.filter(s => s.element !== element);
             element.classList.remove('selected');
             return;
         }
-        
+
         element.classList.add('selected');
-        this.selectedStations.push({
-            element: element,
-            stationId: placementId
-        });
-        
+        this.selectedStations.push({ element, stationId: placementId });
+
         if (this.selectedStations.length === 2) {
             this.createConnectionAutomatically();
         }
     }
-    
+
     async createConnectionAutomatically() {
         const [station1, station2] = this.selectedStations;
-        const result = await this.createConnection(station1.stationId, station2.stationId);
-        if (result && result.created) {
-            this.showNotification('Соединение создано', 'success');
-        }
-        
-        setTimeout(() => {
-            this.clearSelection();
-        }, 500);
+        await this.createConnection(station1.stationId, station2.stationId);
+        setTimeout(() => this.clearSelection(), 300);
     }
-    
+
     clearSelection() {
-        this.selectedStations.forEach(station => {
-            station.element.classList.remove('selected');
-        });
+        this.selectedStations.forEach(station => station.element.classList.remove('selected'));
         this.selectedStations = [];
+        if (this.designer) this.designer.selectedPlacementId = null;
+    }
+
+    showConveyorPickerModal(onSelect, onCancel) {
+        const modal = document.getElementById('conveyorPickerModal');
+        const list = document.getElementById('conveyorPickerList');
+        if (!modal || !list) {
+            const fallback = this.getConveyorById(this.lastConveyorCatalogId);
+            if (onSelect) onSelect(fallback?.id || this.lastConveyorCatalogId);
+            return;
+        }
+
+        const conveyors = this.getConveyorList();
+        list.innerHTML = '';
+        if (conveyors.length === 0) {
+            list.innerHTML = '<p style="padding:1rem;color:#666;">Конвейеры не найдены в каталоге.</p>';
+        } else {
+            conveyors.forEach(cv => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'conveyor-picker-item' + (cv.id === this.lastConveyorCatalogId ? ' selected' : '');
+                const price = cv.cost > 0 ? `${cv.cost.toLocaleString()} руб` : (cv.price || 'Цена по запросу');
+                const power = cv.power_consumption ? `${cv.power_consumption} кВт` : '—';
+                const size = (cv.width && cv.length && cv.height) ? `${cv.width}×${cv.length}×${cv.height} м` : '—';
+                const speed = cv.speed ? `${cv.speed} м/с` : '—';
+                btn.innerHTML = `
+                    <div class="conveyor-picker-item__head">
+                        <strong>${cv.name}</strong>
+                        <span>${price}</span>
+                    </div>
+                    <div class="conveyor-picker-item__meta">
+                        <span><i class="fas fa-bolt"></i> ${power}</span>
+                        <span><i class="fas fa-ruler"></i> ${size}</span>
+                        <span><i class="fas fa-gauge-high"></i> ${speed}</span>
+                    </div>
+                `;
+                btn.addEventListener('click', () => {
+                    this.lastConveyorCatalogId = cv.id;
+                    modal.style.display = 'none';
+                    if (onSelect) onSelect(cv.id);
+                });
+                list.appendChild(btn);
+            });
+        }
+
+        const close = () => {
+            modal.style.display = 'none';
+            if (onCancel) onCancel();
+        };
+
+        document.getElementById('conveyorPickerClose')?.addEventListener('click', close, { once: true });
+        document.getElementById('conveyorPickerCancel')?.addEventListener('click', close, { once: true });
+        modal.style.display = 'block';
+    }
+
+    escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
     }
 
     removeConnection(connectionId) {
@@ -89,81 +155,51 @@ class ConnectionManager {
         }
         this.connections = this.connections.filter(c => c.id !== connectionId);
     }
-    
-    showDeleteConfirmation(connectionId, x, y) {
-        // Удаляем предыдущее модальное окно, если есть
-        const existingModal = document.getElementById('deleteConnectionModal');
-        if (existingModal) {
-            existingModal.remove();
-        }
-        
-        // Создаем модальное окно
-        const modal = document.createElement('div');
-        modal.id = 'deleteConnectionModal';
-        modal.style.position = 'fixed';
-        modal.style.left = `${x}px`;
-        modal.style.top = `${y}px`;
-        modal.style.zIndex = '10000';
-        modal.style.background = 'white';
-        modal.style.border = '2px solid #dc3545';
-        modal.style.borderRadius = '8px';
-        modal.style.padding = '15px';
-        modal.style.boxShadow = '0 4px 12px rgba(0,0,0,0.3)';
-        modal.style.minWidth = '200px';
-        modal.style.fontFamily = 'Arial, sans-serif';
-        
-        modal.innerHTML = `
-            <div style="margin-bottom: 12px; font-weight: bold; color: #dc3545;">
-                Удалить соединение?
-            </div>
-            <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                <button id="deleteConnectionYes" style="
-                    padding: 6px 16px;
-                    background: #dc3545;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 14px;
-                ">Да</button>
-                <button id="deleteConnectionNo" style="
-                    padding: 6px 16px;
-                    background: #6c757d;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    font-size: 14px;
-                ">Нет</button>
-            </div>
+
+    showConnectionContextMenu(connectionId, x, y) {
+        const existing = document.getElementById('connectionContextMenu');
+        if (existing) existing.remove();
+
+        const menu = document.createElement('div');
+        menu.id = 'connectionContextMenu';
+        menu.className = 'connection-context-menu';
+        menu.style.left = `${x}px`;
+        menu.style.top = `${y}px`;
+        menu.innerHTML = `
+            <button type="button" data-action="change">Сменить конвейер</button>
+            <button type="button" data-action="delete" class="danger">Удалить связь</button>
         `;
-        
-        document.body.appendChild(modal);
-        
-        // Обработчики кнопок
-        document.getElementById('deleteConnectionYes').addEventListener('click', () => {
+        document.body.appendChild(menu);
+
+        menu.querySelector('[data-action="change"]').addEventListener('click', () => {
+            menu.remove();
+            const conn = this.connections.find(c => c.id === connectionId);
+            if (!conn) return;
+            this.showConveyorPickerModal(catalogId => {
+                conn.conveyorCatalogId = catalogId;
+                const cv = this.getConveyorById(catalogId);
+                conn.conveyorName = cv?.name || 'Конвейер';
+                this.drawConnection(conn);
+                this.showNotification('Конвейер обновлён', 'success');
+            });
+        });
+
+        menu.querySelector('[data-action="delete"]').addEventListener('click', () => {
+            menu.remove();
             this.removeConnection(connectionId);
-            modal.remove();
             this.showNotification('Соединение удалено', 'success');
         });
-        
-        document.getElementById('deleteConnectionNo').addEventListener('click', () => {
-            modal.remove();
-        });
-        
-        // Закрытие при клике вне модального окна
-        const closeOnOutsideClick = (e) => {
-            if (!modal.contains(e.target)) {
-                modal.remove();
-                document.removeEventListener('click', closeOnOutsideClick);
-            }
-        };
-        
+
         setTimeout(() => {
-            document.addEventListener('click', closeOnOutsideClick);
-        }, 100);
+            document.addEventListener('click', function handler(e) {
+                if (!menu.contains(e.target)) {
+                    menu.remove();
+                    document.removeEventListener('click', handler);
+                }
+            });
+        }, 50);
     }
-    
+
     removeConnectionsForEquipment(stationId) {
         this.connections.forEach(conn => {
             if (conn.fromId === stationId || conn.toId === stationId) {
@@ -173,60 +209,63 @@ class ConnectionManager {
         });
         this.connections = this.connections.filter(conn => conn.fromId !== stationId && conn.toId !== stationId);
     }
-    
-    async createConnection(fromId, toId, fromSide, toSide) {
-        const can = this.canConnect(fromId, toId);
+
+    createConnection(fromId, toId, fromSide, toSide, options = {}) {
+        const opts = typeof options === 'object' && options !== null ? options : {};
+        const can = this.canConnect(fromId, toId, { ignoreCompatibility: opts.ignoreCompatibility === true });
         if (!can.ok) {
             this.showNotification(can.message, 'error');
-            return { created: false, reason: can.message };
+            return Promise.resolve({ created: false, reason: can.message });
         }
-        
-        const existing = this.connections.find(conn => 
-            (conn.fromId === fromId && conn.toId === toId) ||
-            (conn.fromId === toId && conn.toId === fromId)
+
+        const existing = this.connections.find(conn =>
+            conn.fromId === fromId && conn.toId === toId
         );
         if (existing) {
             this.showNotification('Соединение уже существует', 'warning');
-            return { created: false, reason: 'exists' };
+            return Promise.resolve({ created: false, reason: 'exists' });
         }
-        
-        const connectionId = Date.now();
-        const connection = {
-            id: connectionId,
-            fromId: fromId,
-            toId: toId,
-            fromSide: fromSide || 'right',
-            toSide: toSide || 'left',
-            type: 'material_flow'
+
+        const finish = (conveyorCatalogId) => {
+            const cv = this.getConveyorById(conveyorCatalogId);
+            const connectionId = Date.now() + Math.floor(Math.random() * 1000);
+            const connection = {
+                id: connectionId,
+                fromId,
+                toId,
+                fromSide: fromSide || 'right',
+                toSide: toSide || 'left',
+                type: 'material_flow',
+                conveyorCatalogId: conveyorCatalogId || null,
+                conveyorName: cv?.name || null
+            };
+            if (conveyorCatalogId) this.lastConveyorCatalogId = conveyorCatalogId;
+            this.connections.push(connection);
+            this.drawConnection(connection);
+            this.showNotification(`Связь создана${cv ? ': ' + cv.name : ''}`, 'success');
+            return { created: true, id: connectionId };
         };
 
-        this.connections.push(connection);
-        this.drawConnection(connection);
-        return { created: true, id: connectionId };
+        if (opts.skipModal && opts.conveyorCatalogId != null) {
+            return Promise.resolve(finish(opts.conveyorCatalogId));
+        }
+
+        return new Promise(resolve => {
+            this.showConveyorPickerModal(
+                catalogId => resolve(finish(catalogId)),
+                () => resolve({ created: false, reason: 'cancelled' })
+            );
+        });
     }
 
     buildOrthogonalPath(x1, y1, x2, y2, startDir, endDir) {
-        // startDir / endDir: 'h' (горизонтально) или 'v' (вертикально)
-        // Цель: первый сегмент выходит из нужной стороны, последний сегмент входит в нужную сторону.
-        // Если точки уже на одной линии — рисуем прямую.
-        if (x1 === x2 || y1 === y2) {
-            return `M ${x1} ${y1} L ${x2} ${y2}`;
-        }
-
-        // Если направления разные — можно обойтись одним углом
-        if (startDir === 'h' && endDir === 'v') {
-            return `M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2}`;
-        }
-        if (startDir === 'v' && endDir === 'h') {
-            return `M ${x1} ${y1} L ${x1} ${y2} L ${x2} ${y2}`;
-        }
-
-        // Если направления одинаковые — нужен “заведомо правильный” двухугольный путь
+        if (x1 === x2 || y1 === y2) return `M ${x1} ${y1} L ${x2} ${y2}`;
+        if (startDir === 'h' && endDir === 'v') return `M ${x1} ${y1} L ${x2} ${y1} L ${x2} ${y2}`;
+        if (startDir === 'v' && endDir === 'h') return `M ${x1} ${y1} L ${x1} ${y2} L ${x2} ${y2}`;
         if (startDir === 'h' && endDir === 'h') {
             const midX = (x1 + x2) / 2;
             return `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`;
         }
-        // startDir === 'v' && endDir === 'v'
         const midY = (y1 + y2) / 2;
         return `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`;
     }
@@ -234,55 +273,39 @@ class ConnectionManager {
     drawConnection(connection) {
         const fromElement = this.getStationElementById(connection.fromId);
         const toElement = this.getStationElementById(connection.toId);
-        
-        if (!fromElement || !toElement) {
-            return;
-        }
+        if (!fromElement || !toElement) return;
 
         const fromLeft = fromElement.offsetLeft;
         const fromTop = fromElement.offsetTop;
         const fromWidth = fromElement.offsetWidth || 120;
         const fromHeight = fromElement.offsetHeight || 200;
-        
         const toLeft = toElement.offsetLeft;
         const toTop = toElement.offsetTop;
         const toWidth = toElement.offsetWidth || 120;
         const toHeight = toElement.offsetHeight || 200;
-        
+
         const fromCenterX = fromLeft + fromWidth / 2;
         const fromCenterY = fromTop + fromHeight / 2;
         const toCenterX = toLeft + toWidth / 2;
         const toCenterY = toTop + toHeight / 2;
-        
         const dx = toCenterX - fromCenterX;
         const dy = toCenterY - fromCenterY;
-        
+
         let x1, y1, x2, y2;
-        
         if (Math.abs(dx) > Math.abs(dy)) {
             if (dx > 0) {
-                x1 = fromLeft + fromWidth;
-                y1 = fromCenterY;
-                x2 = toLeft;
-                y2 = toCenterY;
+                x1 = fromLeft + fromWidth; y1 = fromCenterY;
+                x2 = toLeft; y2 = toCenterY;
             } else {
-                x1 = fromLeft;
-                y1 = fromCenterY;
-                x2 = toLeft + toWidth;
-                y2 = toCenterY;
+                x1 = fromLeft; y1 = fromCenterY;
+                x2 = toLeft + toWidth; y2 = toCenterY;
             }
+        } else if (dy > 0) {
+            x1 = fromCenterX; y1 = fromTop + fromHeight;
+            x2 = toCenterX; y2 = toTop;
         } else {
-            if (dy > 0) {
-                x1 = fromCenterX;
-                y1 = fromTop + fromHeight;
-                x2 = toCenterX;
-                y2 = toTop;
-            } else {
-                x1 = fromCenterX;
-                y1 = fromTop;
-                x2 = toCenterX;
-                y2 = toTop + toHeight;
-            }
+            x1 = fromCenterX; y1 = fromTop;
+            x2 = toCenterX; y2 = toTop + toHeight;
         }
 
         if (connection.element) {
@@ -290,30 +313,26 @@ class ConnectionManager {
             connection.element.remove();
         }
 
-        // Создаем маркер стрелки если его еще нет
-        this.createArrowMarker();
-        
+        const hasConveyor = !!connection.conveyorCatalogId;
+        const strokeColor = hasConveyor ? '#e67e22' : '#28a745';
+        const label = connection.conveyorName || (hasConveyor ? 'Конвейер' : '');
+
         const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.setAttribute('class', 'connection-line');
-        svg.style.position = 'absolute';
-        svg.style.left = '0';
-        svg.style.top = '0';
-        svg.style.width = '100%';
-        svg.style.height = '100%';
-        svg.style.pointerEvents = 'auto'; // Разрешаем события для удаления
-        svg.style.zIndex = '5';
+        svg.setAttribute('class', 'connection-line' + (hasConveyor ? ' connection-line--conveyor' : ''));
+        Object.assign(svg.style, {
+            position: 'absolute', left: '0', top: '0', width: '100%', height: '100%',
+            pointerEvents: 'none', zIndex: '5'
+        });
         svg.setAttribute('data-connection-id', connection.id);
-        
+
         const w = this.workspace.offsetWidth || 8000;
         const h = this.workspace.offsetHeight || 6000;
         svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
         svg.setAttribute('preserveAspectRatio', 'none');
-        
-        // Добавляем defs с маркером в этот SVG
+
         const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
         const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
         marker.id = `arrowhead-${connection.id}`;
-        // Компактная стрелка, масштабируется от толщины линии
         marker.setAttribute('viewBox', '0 0 10 10');
         marker.setAttribute('refX', '10');
         marker.setAttribute('refY', '5');
@@ -321,92 +340,70 @@ class ConnectionManager {
         marker.setAttribute('markerHeight', '4');
         marker.setAttribute('orient', 'auto');
         marker.setAttribute('markerUnits', 'strokeWidth');
-        
         const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         arrowPath.setAttribute('d', 'M 0,0 L 10,5 L 0,10 Z');
-        arrowPath.setAttribute('fill', '#28a745');
-        arrowPath.setAttribute('stroke', '#ffffff');
-        arrowPath.setAttribute('stroke-width', '0.9');
+        arrowPath.setAttribute('fill', strokeColor);
         marker.appendChild(arrowPath);
         defs.appendChild(marker);
         svg.appendChild(defs);
 
-        // Определяем направления “выхода” и “входа” по выбранным сторонам точек.
-        // Если точка на левом/правом ребре — горизонтальное направление, иначе вертикальное.
         const EPS = 0.01;
         const startDir = (Math.abs(x1 - fromLeft) < EPS || Math.abs(x1 - (fromLeft + fromWidth)) < EPS) ? 'h' : 'v';
         const endDir = (Math.abs(x2 - toLeft) < EPS || Math.abs(x2 - (toLeft + toWidth)) < EPS) ? 'h' : 'v';
 
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        const pathData = this.buildOrthogonalPath(x1, y1, x2, y2, startDir, endDir);
-        path.setAttribute('d', pathData);
-        path.setAttribute('stroke', '#28a745');
-        path.setAttribute('stroke-width', '4');
+        path.setAttribute('d', this.buildOrthogonalPath(x1, y1, x2, y2, startDir, endDir));
+        path.setAttribute('stroke', strokeColor);
+        path.setAttribute('stroke-width', hasConveyor ? '5' : '4');
         path.setAttribute('fill', 'none');
         path.setAttribute('stroke-linecap', 'round');
         path.setAttribute('stroke-linejoin', 'round');
-        path.setAttribute('marker-end', `url(#arrowhead-${connection.id})`); // Добавляем стрелку
-        path.setAttribute('data-connection-id', connection.id);
+        path.setAttribute('marker-end', `url(#arrowhead-${connection.id})`);
         path.style.cursor = 'pointer';
-        path.style.pointerEvents = 'auto'; // Делаем линию кликабельной
-        
+        path.style.pointerEvents = 'stroke';
+
         const onContextMenu = (e) => {
             e.preventDefault();
             e.stopPropagation();
-            this.showDeleteConfirmation(connection.id, e.clientX, e.clientY);
+            this.showConnectionContextMenu(connection.id, e.clientX, e.clientY);
         };
         path.addEventListener('contextmenu', onContextMenu);
-        
+
         svg.appendChild(path);
+
+        if (label) {
+            const midX = (x1 + x2) / 2;
+            const midY = (y1 + y2) / 2;
+            const labelWidth = Math.min(300, Math.max(140, Math.ceil(label.length * 5.6)));
+            const labelHeight = label.length > 24 ? 44 : 30;
+
+            const fo = document.createElementNS('http://www.w3.org/2000/svg', 'foreignObject');
+            fo.setAttribute('x', String(midX - labelWidth / 2));
+            fo.setAttribute('y', String(midY - labelHeight / 2));
+            fo.setAttribute('width', String(labelWidth));
+            fo.setAttribute('height', String(labelHeight));
+            fo.style.pointerEvents = 'all';
+            fo.style.overflow = 'visible';
+
+            const labelWrap = document.createElement('div');
+            labelWrap.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+            labelWrap.className = 'connection-conveyor-label';
+            labelWrap.title = `${label}\nПКМ: сменить или удалить связь`;
+            labelWrap.innerHTML = `<i class="fas fa-arrows-alt-h"></i><span class="connection-conveyor-label__text">${this.escapeHtml(label)}</span>`;
+            labelWrap.addEventListener('contextmenu', onContextMenu);
+            fo.appendChild(labelWrap);
+            svg.appendChild(fo);
+
+            connection._cleanup = () => {
+                path.removeEventListener('contextmenu', onContextMenu);
+                labelWrap.removeEventListener('contextmenu', onContextMenu);
+            };
+        } else {
+            connection._cleanup = () => path.removeEventListener('contextmenu', onContextMenu);
+        }
+
         this.workspace.appendChild(svg);
         connection.element = svg;
-        connection._cleanup = () => {
-            path.removeEventListener('contextmenu', onContextMenu);
-        };
-    }
-    
-    createArrowMarker() {
-        // Проверяем, есть ли уже маркер в workspace или в body
-        let existingMarker = document.getElementById('arrowhead-marker');
-        if (existingMarker) return;
-        
-        // Создаем SVG для маркера
-        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-        svg.style.position = 'absolute';
-        svg.style.width = '0';
-        svg.style.height = '0';
-        svg.style.overflow = 'hidden';
-        svg.style.pointerEvents = 'none';
-        svg.id = 'arrowhead-marker';
-        
-        const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
-        const marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
-        
-        marker.id = 'arrowhead';
-        marker.setAttribute('viewBox', '0 0 12 12');
-        marker.setAttribute('refX', '10');
-        marker.setAttribute('refY', '6');
-        marker.setAttribute('markerWidth', '10');
-        marker.setAttribute('markerHeight', '10');
-        marker.setAttribute('orient', 'auto');
-        marker.setAttribute('markerUnits', 'userSpaceOnUse');
-        
-        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', 'M 0,0 L 10,6 L 0,12 Z');
-        path.setAttribute('fill', '#28a745');
-        path.setAttribute('stroke', '#ffffff');
-        path.setAttribute('stroke-width', '0.5');
-        
-        marker.appendChild(path);
-        defs.appendChild(marker);
-        svg.appendChild(defs);
-        
-        // Добавляем маркер в workspace, чтобы он был в том же SVG контексте
-        if (this.workspace) {
-            this.workspace.appendChild(svg);
-        } else {
-            document.body.appendChild(svg);
-        }
     }
 
     clearAllConnections() {
@@ -423,56 +420,25 @@ class ConnectionManager {
             container = document.createElement('div');
             container.id = 'notifications-container';
             Object.assign(container.style, {
-                position: 'fixed',
-                top: '20px',
-                right: '20px',
-                zIndex: '10000',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'flex-end',
-                gap: '12px'
+                position: 'fixed', top: '72px', right: '20px', zIndex: '10000',
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '12px'
             });
             document.body.appendChild(container);
         }
-
         const notification = document.createElement('div');
         notification.textContent = message;
-
         Object.assign(notification.style, {
-            padding: '1rem 1.5rem',
-            borderRadius: '8px',
-            color: 'white',
-            fontWeight: '500',
-            maxWidth: '300px',
-            wordWrap: 'break-word',
-            boxShadow: '0 4px 12px rgba(0, 0, 0, 0.15)'
+            padding: '1rem 1.5rem', borderRadius: '8px', color: 'white', fontWeight: '500',
+            maxWidth: '320px', wordWrap: 'break-word', boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+            backgroundColor: { success: '#28a745', error: '#dc3545', warning: '#ffc107', info: '#17a2b8' }[type] || '#17a2b8'
         });
-
-        const colors = {
-            success: '#28a745',
-            error: '#dc3545',
-            warning: '#ffc107',
-            info: '#17a2b8'
-        };
-        notification.style.backgroundColor = colors[type] || colors.info;
-
-        if (container.firstChild) {
-            container.insertBefore(notification, container.firstChild);
-        } else {
-            container.appendChild(notification);
-        }
-
+        container.insertBefore(notification, container.firstChild);
         setTimeout(() => {
             notification.style.opacity = '0';
             notification.style.transition = 'opacity 0.2s ease';
-            setTimeout(() => {
-                if (notification.parentNode) {
-                    notification.parentNode.removeChild(notification);
-                }
-            }, 200);
-        }, 2000);
+            setTimeout(() => notification.remove(), 200);
+        }, 2500);
     }
 }
 
 window.ConnectionManager = ConnectionManager;
-

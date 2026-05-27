@@ -8,6 +8,7 @@
 
     const MESSAGE_SAVED = 'leskom:configurator:saved';
     const COOKIE_USER_ID = 'leskom_user_id';
+    const IS_FILE_PROTOCOL = global.location?.protocol === 'file:';
 
     function getCookie(name) {
         const match = global.document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
@@ -56,6 +57,7 @@
     }
 
     function notifyParent(parentOrigin, data) {
+        if (IS_FILE_PROTOCOL) return;
         if (global.parent === global) return;
         global.parent.postMessage(
             {
@@ -164,6 +166,13 @@
         global.__leskomProjectId = params.projectId;
 
         applyEmbedChrome(params);
+
+        // Локальный запуск через file://: API и postMessage недоступны (CORS/origin ограничения)
+        if (IS_FILE_PROTOCOL) {
+            const saveCabinetBtn = global.document.getElementById('saveToCabinetBtn');
+            if (saveCabinetBtn) saveCabinetBtn.hidden = true;
+            return;
+        }
 
         const userId = params.userId || 'guest';
         designer.projectStorageKey = storageKey(userId, params.projectId);

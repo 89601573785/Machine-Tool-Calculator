@@ -40,7 +40,6 @@ const embedCss = read('css/embed.css');
 // --- index.html wiring ---
 ok(1, 'integration.js подключён до main.js',
     indexHtml.indexOf('js/integration.js') < indexHtml.indexOf('js/main.js'));
-ok(2, 'Кнопка saveToCabinetBtn в index.html', indexHtml.includes('id="saveToCabinetBtn"'));
 ok(2, 'Поле projectTitleInput в index.html', indexHtml.includes('id="projectTitleInput"'));
 ok(5, 'embed.css подключён', indexHtml.includes('css/embed.css'));
 

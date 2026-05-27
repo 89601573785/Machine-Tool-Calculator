@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Онлайн-сборщик производственного цеха</title>
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/theme.css">
+    <link rel="stylesheet" href="css/connections.css">
     <link rel="stylesheet" href="css/embed.css">
-    <!-- Продакшен: замените на vendor/ (см. vendor/README.md) -->
+    <!-- Локальный file:// режим: используем CDN, чтобы избежать CORS на wasm -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -27,6 +29,13 @@
                         <input type="text" id="equipmentSearch" placeholder="Поиск..." class="search-input">
                         <i class="fas fa-search search-icon"></i>
                     </div>
+                    <div class="catalog-tabs" role="tablist">
+                        <button type="button" class="catalog-tab active" data-tab="all"><span class="tab-label-full">Всё</span></button>
+                        <button type="button" class="catalog-tab" data-tab="machine"><span class="tab-label-full">Станки</span></button>
+                        <button type="button" class="catalog-tab" data-tab="conveyor"><span class="tab-label-full">Конвейеры</span></button>
+                        <button type="button" class="catalog-tab" data-tab="complex"><span class="tab-label-full">Комплексы</span></button>
+                    </div>
+                    <div id="catalogTabHint" class="catalog-tab-hint"></div>
                     <div class="equipment-catalog" id="equipmentCatalog">
                         <div style="padding: 2rem; text-align: center; color: #6c757d;">
                             <i class="fas fa-spinner fa-spin" style="font-size: 2rem; margin-bottom: 1rem;"></i>
@@ -40,11 +49,16 @@
                 <div class="workspace-container" id="workspaceContainer">
                     <div class="workspace-area" id="workspaceArea">
                         <div class="grid-overlay" id="gridOverlay"></div>
+                        <div class="workspace-top-edge" aria-hidden="true"></div>
+                        <div class="workspace-left-edge" aria-hidden="true"></div>
+                        <div class="workspace-right-edge" aria-hidden="true"></div>
+                        <div class="workspace-top-marker" id="workspaceTopMarker" aria-hidden="true">Граница области</div>
+                        <div class="workspace-left-marker" id="workspaceLeftMarker" aria-hidden="true">Граница области</div>
+                        <div class="workspace-right-marker" id="workspaceRightMarker" aria-hidden="true">Граница области</div>
+                        <div class="workspace-bottom-edge" aria-hidden="true"></div>
+                        <div class="workspace-end-marker" id="workspaceEndMarker">Граница области</div>
                     </div>
                 </div>
-                
-                <!-- Полоса сверху, чтобы оборудование визуально не заезжало на панель кнопок -->
-                <div class="workspace-top-strip"></div>
                 
                 <div class="workspace-top-controls">
                     <div id="projectTitleWrap" class="project-title-wrap" hidden>
@@ -53,11 +67,19 @@
                     <button id="catalogToggleBtn" class="btn btn-outline btn-sm" title="Показать/скрыть каталог оборудования"><i class="fas fa-tools"></i><span class="btn-label"> Каталог</span></button>
                     <button id="clearWorkspaceBtn" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i><span class="btn-label"> Очистить</span></button>
                     <button id="saveProjectBtn" class="btn btn-outline btn-sm" title="Сохранить черновик в браузере"><i class="fas fa-save"></i><span class="btn-label"> Сохранить</span></button>
-                    <button id="saveToCabinetBtn" class="btn btn-primary btn-sm" hidden title="Сохранить в личном кабинете на сайте"><i class="fas fa-cloud-upload-alt"></i><span class="btn-label"> Сохранить в ЛК</span></button>
-                    <button id="loadProjectBtn" class="btn btn-outline btn-sm" title="Загрузить черновик из браузера"><i class="fas fa-folder-open"></i><span class="btn-label"> Загрузить</span></button>
-                    <button id="exportProjectBtn" class="btn btn-outline btn-sm" title="Скачать проект в JSON"><i class="fas fa-file-export"></i><span class="btn-label"> Экспорт</span></button>
-                    <button id="importProjectBtn" class="btn btn-outline btn-sm" title="Загрузить проект из JSON"><i class="fas fa-file-import"></i><span class="btn-label"> Импорт</span></button>
+                    <div class="top-actions-menu" id="projectMenuWrap">
+                        <button id="projectMenuBtn" class="btn btn-outline btn-sm" title="Действия с проектом">
+                            <i class="fas fa-folder"></i><span class="btn-label"> Проект</span>
+                        </button>
+                        <div class="top-actions-menu__list" id="projectMenuList">
+                            <button id="loadProjectBtn" class="btn btn-outline btn-sm" title="Загрузить черновик из браузера"><i class="fas fa-folder-open"></i><span class="btn-label"> Загрузить</span></button>
+                            <button id="exportProjectBtn" class="btn btn-outline btn-sm" title="Скачать проект в JSON"><i class="fas fa-file-export"></i><span class="btn-label"> Экспорт</span></button>
+                            <button id="importProjectBtn" class="btn btn-outline btn-sm" title="Загрузить проект из JSON"><i class="fas fa-file-import"></i><span class="btn-label"> Импорт</span></button>
+                        </div>
+                    </div>
                     <input id="importProjectFileInput" type="file" accept="application/json,.json" style="display:none" />
+                    <button id="connectModeBtn" class="btn btn-outline btn-sm" title="Режим связывания станков"><i class="fas fa-link"></i><span class="btn-label"> Связать</span></button>
+                    <button id="howToUseBtn" class="btn btn-outline btn-sm" title="Инструкция по использованию"><i class="fas fa-circle-info"></i><span class="btn-label"> Как пользоваться</span></button>
                     <button id="gridToggleBtn" class="btn btn-outline btn-sm"><i class="fas fa-th"></i><span class="btn-label"> Сетка</span></button>
                     <button id="snapToggleBtn" class="btn btn-outline btn-sm" title="Привязка к сетке (при перетаскивании удерживайте Ctrl, чтобы временно отключить)"><i class="fas fa-magnet"></i><span class="btn-label"> Привязка</span></button>
                     <div class="zoom-controls">
@@ -69,36 +91,12 @@
                     <button id="calculateBtn" class="btn btn-primary"><i class="fas fa-calculator"></i><span class="btn-label"> Рассчитать</span></button>
                 </div>
                 
-                <div class="connection-instruction collapsed" id="connectionInstruction">
+                <div class="connection-instruction collapsed" id="connectionInstruction" style="display:none;">
                     <div class="instruction-header" onclick="toggleInstruction()">
                         <i class="fas fa-info-circle"></i>
                         <h4>Как пользоваться</h4>
                     </div>
-                    <div class="instruction-content" id="instructionContent">
-                        <p><strong>Как добавить станок:</strong></p>
-                        <ol>
-                            <li>Нажмите кнопку "Каталог" вверху</li>
-                            <li>Перетащите станок из каталога на рабочую область</li>
-                        </ol>
-                        <p><strong>Как связать станки:</strong></p>
-                        <ol>
-                            <li>Нажмите <kbd>Shift</kbd> + клик на первом станке</li>
-                            <li>Нажмите <kbd>Shift</kbd> + клик на втором станке</li>
-                            <li>Появится зеленая линия соединения</li>
-                        </ol>
-                        <p><strong>Масштабирование:</strong></p>
-                        <ul>
-                            <li><kbd>Ctrl</kbd> + <kbd>колесо мыши</kbd> - приблизить/отдалить</li>
-                            <li>Кнопки <i class="fas fa-search-plus"></i> и <i class="fas fa-search-minus"></i></li>
-                        </ul>
-                        <p><strong>Перемещение по рабочей области:</strong></p>
-                        <ul>
-                            <li><kbd>Alt</kbd> + <kbd>левая кнопка мыши</kbd> - зажмите и перетащите для перемещения</li>
-                            <li><kbd>Средняя кнопка мыши</kbd> - зажмите и перетащите для перемещения</li>
-                            <li><kbd>Правая кнопка мыши</kbd> - зажмите и перетащите для перемещения</li>
-                        </ul>
-                        <p><strong>Удаление станка:</strong> Нажмите кнопку <strong>×</strong> на станке</p>
-                    </div>
+                    <div class="instruction-content" id="instructionContent"></div>
                 </div>
             </main>
         </div>
@@ -145,10 +143,116 @@
         </div>
     </div>
 
+    <div id="conveyorPickerModal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3><i class="fas fa-arrows-alt-h"></i> Выбор конвейера</h3>
+                <span class="close" id="conveyorPickerClose">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 1rem; color: #666;">Выберите транспортёр для участка между станками:</p>
+                <div id="conveyorPickerList" class="conveyor-picker-list"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="conveyorPickerCancel">Отмена</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="howToUseModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 760px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-circle-info"></i> Как пользоваться</h3>
+                <span class="close" id="howToUseClose">&times;</span>
+            </div>
+            <div class="modal-body how-to-use-modal-body" id="howToUseModalBody" style="max-height: 70vh; overflow-y: auto;"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="howToUseCloseBtn">Закрыть</button>
+            </div>
+        </div>
+    </div>
+
+    <template id="howToUseTemplate">
+        <div class="how-to-use-content">
+            <p class="how-to-use-lead">Конструктор компоновки цеха: размещайте станки, связывайте их конвейерами и получайте расчёт линии.</p>
+
+            <h4 class="how-to-use-heading">Кнопки верхней панели</h4>
+            <table class="btn-help-table">
+                <thead>
+                    <tr><th>Кнопка</th><th>Что делает</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Каталог</strong></td><td>Показывает или скрывает боковую панель с оборудованием.</td></tr>
+                    <tr><td><strong>Очистить</strong></td><td>Удаляет все станки и связи с рабочей области (с подтверждением).</td></tr>
+                    <tr><td><strong>Сохранить</strong></td><td>Сохраняет текущий проект как черновик в браузере (localStorage).</td></tr>
+                    <tr><td><strong>Проект</strong></td><td>Открывает меню действий с файлом проекта.</td></tr>
+                    <tr><td>↳ <strong>Загрузить</strong></td><td>Загружает последний сохранённый черновик из браузера.</td></tr>
+                    <tr><td>↳ <strong>Экспорт</strong></td><td>Скачивает проект в JSON-файл на компьютер.</td></tr>
+                    <tr><td>↳ <strong>Импорт</strong></td><td>Загружает проект из JSON-файла с диска.</td></tr>
+                    <tr><td><strong>Связать</strong></td><td>Режим создания связей: клик по источнику (откуда), затем по приёмнику (куда). После связи выберите конвейер.</td></tr>
+                    <tr><td><strong>Как пользоваться</strong></td><td>Открывает эту инструкцию.</td></tr>
+                    <tr><td><strong>Сетка</strong></td><td>Включает или выключает отображение сетки на рабочей области.</td></tr>
+                    <tr><td><strong>Привязка</strong></td><td>Привязывает станки к сетке при перетаскивании. Удерживайте <kbd>Ctrl</kbd>, чтобы временно отключить.</td></tr>
+                    <tr><td><strong>− / + / ⊙</strong></td><td>Уменьшить масштаб, увеличить масштаб, сбросить масштаб и центрировать область.</td></tr>
+                    <tr><td><strong>Рассчитать</strong></td><td>Считает производительность, энергию, стоимость и связи. Можно посмотреть отчёт или скачать PDF.</td></tr>
+                </tbody>
+            </table>
+
+            <h4 class="how-to-use-heading">Каталог оборудования</h4>
+            <ul>
+                <li>Вкладки: <strong>Все</strong>, <strong>Станки</strong>, <strong>Конвейеры</strong> (справочно), <strong>Комплексы</strong>.</li>
+                <li>Строка поиска фильтрует список по названию.</li>
+                <li>Перетащите карточку станка или комплекса на рабочую область.</li>
+                <li>Конвейер отдельно на поле не ставится — он выбирается при создании связи.</li>
+            </ul>
+
+            <h4 class="how-to-use-heading">Станки на поле</h4>
+            <ul>
+                <li><strong>Перемещение</strong> — перетащите карточку мышью.</li>
+                <li><strong>Удаление</strong> — кнопка <strong>×</strong> в углу карточки.</li>
+                <li>Красные пунктирные линии по краям — граница рабочей области.</li>
+            </ul>
+
+            <h4 class="how-to-use-heading">Связи между станками</h4>
+            <ol>
+                <li>Нажмите <strong>«Связать»</strong> (или используйте <kbd>Shift</kbd> + клик по двум станкам).</li>
+                <li>Кликните <strong>источник</strong> — станок, откуда идёт поток (обычно правее).</li>
+                <li>Кликните <strong>приёмник</strong> — станок, куда идёт поток (обычно левее).</li>
+                <li>В окне выберите конвейер (мощность, габариты, скорость, цена).</li>
+                <li>На связи появится оранжевая линия со стрелкой и подписью конвейера.</li>
+            </ol>
+            <p>Несколько станков можно подключить к одному приёмнику — создавайте отдельную связь для каждой пары.</p>
+            <p><strong>Редактирование связи:</strong> ПКМ по линии или по овалу с названием конвейера — сменить конвейер или удалить связь.</p>
+
+            <h4 class="how-to-use-heading">Комплексы</h4>
+            <ol>
+                <li>Откройте вкладку <strong>«Комплексы»</strong> в каталоге.</li>
+                <li>Перетащите комплекс на рабочую область.</li>
+                <li>Схема развернётся автоматически: станки выстроятся в ряд со связями.</li>
+            </ol>
+
+            <h4 class="how-to-use-heading">Навигация по рабочей области</h4>
+            <ul>
+                <li><kbd>Ctrl</kbd> + <kbd>колесо мыши</kbd> — приближение и отдаление.</li>
+                <li><kbd>Alt</kbd> + ЛКМ, средняя кнопка мыши или ПКМ + перетаскивание — перемещение по полю.</li>
+                <li>ЛКМ по пустому месту на поле + перетаскивание — тоже перемещение.</li>
+                <li>Кнопки <strong>−</strong> и <strong>+</strong> — масштаб; кнопка с прицелом — центрирование.</li>
+            </ul>
+
+            <h4 class="how-to-use-heading">Расчёт и отчёт</h4>
+            <ul>
+                <li>После нажатия <strong>«Рассчитать»</strong> можно <strong>посмотреть</strong> результаты на экране или <strong>скачать PDF</strong>.</li>
+                <li>В расчёте учитываются станки, связи, конвейеры и узкое место линии.</li>
+            </ul>
+        </div>
+    </template>
+
     <script src="js/equipment-data.js"></script>
+    <script src="js/catalog-meta.js"></script>
     <script src="js/connections.js"></script>
     <script src="js/integration.js"></script>
     <script src="js/main.js"></script>
+    <script src="js/factory-extensions.js"></script>
 </body>
 </html>
 
