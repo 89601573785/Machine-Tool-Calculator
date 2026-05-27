@@ -5,6 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Онлайн-сборщик производственного цеха</title>
     <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/embed.css">
+    <!-- Продакшен: замените на vendor/ (см. vendor/README.md) -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
@@ -45,22 +47,26 @@
                 <div class="workspace-top-strip"></div>
                 
                 <div class="workspace-top-controls">
-                    <button id="catalogToggleBtn" class="btn btn-outline btn-sm" title="Показать/скрыть каталог оборудования"><i class="fas fa-tools"></i> Каталог</button>
-                    <button id="clearWorkspaceBtn" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i> Очистить</button>
-                    <button id="saveProjectBtn" class="btn btn-outline btn-sm" title="Сохранить проект (в браузере)"><i class="fas fa-save"></i> Сохранить</button>
-                    <button id="loadProjectBtn" class="btn btn-outline btn-sm" title="Загрузить проект (из браузера)"><i class="fas fa-folder-open"></i> Загрузить</button>
-                    <button id="exportProjectBtn" class="btn btn-outline btn-sm" title="Скачать проект в JSON"><i class="fas fa-file-export"></i> Экспорт</button>
-                    <button id="importProjectBtn" class="btn btn-outline btn-sm" title="Загрузить проект из JSON"><i class="fas fa-file-import"></i> Импорт</button>
+                    <div id="projectTitleWrap" class="project-title-wrap" hidden>
+                        <input type="text" id="projectTitleInput" placeholder="Название проекта" maxlength="120" title="Название для личного кабинета">
+                    </div>
+                    <button id="catalogToggleBtn" class="btn btn-outline btn-sm" title="Показать/скрыть каталог оборудования"><i class="fas fa-tools"></i><span class="btn-label"> Каталог</span></button>
+                    <button id="clearWorkspaceBtn" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i><span class="btn-label"> Очистить</span></button>
+                    <button id="saveProjectBtn" class="btn btn-outline btn-sm" title="Сохранить черновик в браузере"><i class="fas fa-save"></i><span class="btn-label"> Сохранить</span></button>
+                    <button id="saveToCabinetBtn" class="btn btn-primary btn-sm" hidden title="Сохранить в личном кабинете на сайте"><i class="fas fa-cloud-upload-alt"></i><span class="btn-label"> Сохранить в ЛК</span></button>
+                    <button id="loadProjectBtn" class="btn btn-outline btn-sm" title="Загрузить черновик из браузера"><i class="fas fa-folder-open"></i><span class="btn-label"> Загрузить</span></button>
+                    <button id="exportProjectBtn" class="btn btn-outline btn-sm" title="Скачать проект в JSON"><i class="fas fa-file-export"></i><span class="btn-label"> Экспорт</span></button>
+                    <button id="importProjectBtn" class="btn btn-outline btn-sm" title="Загрузить проект из JSON"><i class="fas fa-file-import"></i><span class="btn-label"> Импорт</span></button>
                     <input id="importProjectFileInput" type="file" accept="application/json,.json" style="display:none" />
-                    <button id="gridToggleBtn" class="btn btn-outline btn-sm"><i class="fas fa-th"></i> Сетка</button>
-                    <button id="snapToggleBtn" class="btn btn-outline btn-sm" title="Привязка к сетке (при перетаскивании удерживайте Ctrl, чтобы временно отключить)"><i class="fas fa-magnet"></i> Привязка</button>
+                    <button id="gridToggleBtn" class="btn btn-outline btn-sm"><i class="fas fa-th"></i><span class="btn-label"> Сетка</span></button>
+                    <button id="snapToggleBtn" class="btn btn-outline btn-sm" title="Привязка к сетке (при перетаскивании удерживайте Ctrl, чтобы временно отключить)"><i class="fas fa-magnet"></i><span class="btn-label"> Привязка</span></button>
                     <div class="zoom-controls">
                         <button id="zoomOutBtn" class="btn btn-outline btn-sm"><i class="fas fa-search-minus"></i></button>
                         <span id="zoomLevel">100%</span>
                         <button id="zoomInBtn" class="btn btn-outline btn-sm"><i class="fas fa-search-plus"></i></button>
                         <button id="zoomResetBtn" class="btn btn-outline btn-sm" title="Центрировать рабочую область"><i class="fas fa-crosshairs"></i></button>
                     </div>
-                    <button id="calculateBtn" class="btn btn-primary"><i class="fas fa-calculator"></i> Рассчитать</button>
+                    <button id="calculateBtn" class="btn btn-primary"><i class="fas fa-calculator"></i><span class="btn-label"> Рассчитать</span></button>
                 </div>
                 
                 <div class="connection-instruction collapsed" id="connectionInstruction">
@@ -141,6 +147,7 @@
 
     <script src="js/equipment-data.js"></script>
     <script src="js/connections.js"></script>
+    <script src="js/integration.js"></script>
     <script src="js/main.js"></script>
 </body>
 </html>

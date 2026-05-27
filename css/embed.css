@@ -1,0 +1,64 @@
+/* Режим встраивания в iframe (?embed=1) */
+body.embed-mode {
+    background: #f5f7f5;
+}
+
+body.embed-mode .workspace-top-strip {
+    height: 56px;
+}
+
+body.embed-mode .workspace-top-controls {
+    top: 8px;
+    left: 8px !important;
+    right: 8px;
+    max-width: calc(100% - 16px);
+    padding: 6px 8px;
+    gap: 6px;
+    font-size: 0.8rem;
+}
+
+body.embed-mode .workspace-top-controls .btn {
+    padding: 0.4rem 0.65rem;
+    font-size: 0.75rem;
+}
+
+body.embed-mode .workspace-top-controls .btn span.btn-label {
+    display: none;
+}
+
+@media (min-width: 900px) {
+    body.embed-mode .workspace-top-controls .btn span.btn-label {
+        display: inline;
+    }
+}
+
+body.embed-mode #connectionInstruction {
+    display: none !important;
+}
+
+body.embed-mode .overlay-sidebar {
+    width: 280px;
+}
+
+.project-title-wrap {
+    display: none;
+    align-items: center;
+    gap: 6px;
+}
+
+.project-title-wrap input {
+    padding: 0.35rem 0.5rem;
+    border: 2px solid #e9ecef;
+    border-radius: 6px;
+    font-size: 0.85rem;
+    min-width: 140px;
+    max-width: 220px;
+}
+
+body.embed-mode .project-title-wrap {
+    display: flex;
+}
+
+body.embed-mode #saveToCabinetBtn {
+    white-space: nowrap;
+}

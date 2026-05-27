@@ -21,8 +21,24 @@ class FactoryDesigner {
         this.selectedPlacementId = null;
         this.connectionManager = null;
         this.nextPlacementId = 1;
-        this.projectStorageKey = 'factory_designer_project_v1';
+        this.projectStorageKey = this.resolveProjectStorageKey();
         this.init();
+    }
+
+    resolveProjectStorageKey() {
+        const params = window.__leskomConfiguratorParams;
+        const integration = window.LeskomConfiguratorIntegration;
+        if (integration?.storageKey) {
+            const userId = params?.userId || 'guest';
+            const projectId = params?.projectId || window.__leskomProjectId || null;
+            return integration.storageKey(userId, projectId);
+        }
+        return 'factory_designer_guest_draft';
+    }
+
+    getProjectTitle() {
+        const input = document.getElementById('projectTitleInput');
+        return (input?.value || '').trim() || 'Без названия';
     }
 
     async init() {
@@ -133,8 +149,9 @@ class FactoryDesigner {
         }
         
         // Инициализируем SQL.js
+        const sqlBase = window.__sqlJsBase || 'https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/';
         const SQL = await initSqlJs({
-            locateFile: file => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.8.0/${file}`
+            locateFile: file => `${sqlBase}${file}`
         });
         
         // Загружаем базу данных
@@ -1042,7 +1059,10 @@ class FactoryDesigner {
     serializeProject() {
         return {
             version: 1,
+            externalId: window.__leskomProjectId || null,
+            title: this.getProjectTitle(),
             createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
             view: {
                 zoom: this.zoom,
                 panX: this.panX,
@@ -1965,8 +1985,15 @@ async function downloadPDF() {
 window.downloadPDF = downloadPDF;
 
 let factoryDesignerInstance = null;
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     factoryDesignerInstance = new FactoryDesigner();
     window.factoryDesigner = factoryDesignerInstance;
+    if (window.LeskomConfiguratorIntegration?.attach) {
+        try {
+            await window.LeskomConfiguratorIntegration.attach(factoryDesignerInstance);
+        } catch (e) {
+            console.error('Интеграция ЛК:', e);
+        }
+    }
 });
 
