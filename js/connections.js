@@ -83,8 +83,9 @@ class ConnectionManager {
 
     removeConnection(connectionId) {
         const connection = this.connections.find(c => c.id === connectionId);
-        if (connection && connection.element) {
-            connection.element.remove();
+        if (connection) {
+            if (connection._cleanup) connection._cleanup();
+            if (connection.element) connection.element.remove();
         }
         this.connections = this.connections.filter(c => c.id !== connectionId);
     }
@@ -166,9 +167,8 @@ class ConnectionManager {
     removeConnectionsForEquipment(stationId) {
         this.connections.forEach(conn => {
             if (conn.fromId === stationId || conn.toId === stationId) {
-                if (conn.element) {
-                    conn.element.remove();
-                }
+                if (conn._cleanup) conn._cleanup();
+                if (conn.element) conn.element.remove();
             }
         });
         this.connections = this.connections.filter(conn => conn.fromId !== stationId && conn.toId !== stationId);
@@ -286,6 +286,7 @@ class ConnectionManager {
         }
 
         if (connection.element) {
+            if (connection._cleanup) connection._cleanup();
             connection.element.remove();
         }
 
@@ -349,16 +350,19 @@ class ConnectionManager {
         path.style.cursor = 'pointer';
         path.style.pointerEvents = 'auto'; // Делаем линию кликабельной
         
-        // Обработчик правого клика для удаления соединения
-        path.addEventListener('contextmenu', (e) => {
+        const onContextMenu = (e) => {
             e.preventDefault();
             e.stopPropagation();
             this.showDeleteConfirmation(connection.id, e.clientX, e.clientY);
-        });
+        };
+        path.addEventListener('contextmenu', onContextMenu);
         
         svg.appendChild(path);
         this.workspace.appendChild(svg);
         connection.element = svg;
+        connection._cleanup = () => {
+            path.removeEventListener('contextmenu', onContextMenu);
+        };
     }
     
     createArrowMarker() {
@@ -407,9 +411,8 @@ class ConnectionManager {
 
     clearAllConnections() {
         this.connections.forEach(connection => {
-            if (connection.element) {
-                connection.element.remove();
-            }
+            if (connection._cleanup) connection._cleanup();
+            if (connection.element) connection.element.remove();
         });
         this.connections = [];
     }

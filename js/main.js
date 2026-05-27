@@ -941,7 +941,6 @@ class FactoryDesigner {
             const workspaceRect = workspace.getBoundingClientRect();
             const currentX = parseFloat(element.style.left) || 0;
             const currentY = parseFloat(element.style.top) || 0;
-            // Правильный расчет координат: getBoundingClientRect уже учитывает transform
             const clickX = (e.clientX - workspaceRect.left) / this.zoom;
             const clickY = (e.clientY - workspaceRect.top) / this.zoom;
             startX = clickX - currentX;
@@ -955,17 +954,14 @@ class FactoryDesigner {
         const updatePosition = (e) => {
             if (!isDragging) return;
             const workspaceRect = workspace.getBoundingClientRect();
-            // Правильный расчет координат: getBoundingClientRect уже учитывает transform
             const cursorX = (e.clientX - workspaceRect.left) / this.zoom;
             const cursorY = (e.clientY - workspaceRect.top) / this.zoom;
             let newX = Math.max(0, cursorX - startX);
             let newY = Math.max(0, cursorY - startY);
             if (this.snapEnabled && !e.ctrlKey) {
-                // 1) привязка к сетке
                 const snapped = this.applySnap(newX, newY);
                 newX = Math.max(0, snapped.x);
                 newY = Math.max(0, snapped.y);
-                // 2) умное выравнивание относительно других элементов
                 const aligned = this.applyAlignmentSnap(newX, newY, element);
                 newX = Math.max(0, aligned.x);
                 newY = Math.max(0, aligned.y);
@@ -992,14 +988,21 @@ class FactoryDesigner {
             }
         };
         
-        document.addEventListener('mousemove', updatePosition);
-        document.addEventListener('mouseup', () => {
+        const onMouseUp = () => {
             if (isDragging) {
                 isDragging = false;
                 element.classList.remove('dragging');
                 this.hideAlignmentGuides();
             }
-        });
+        };
+        
+        document.addEventListener('mousemove', updatePosition);
+        document.addEventListener('mouseup', onMouseUp);
+        
+        element._dragCleanup = () => {
+            document.removeEventListener('mousemove', updatePosition);
+            document.removeEventListener('mouseup', onMouseUp);
+        };
     }
 
     removeEquipment(element) {
@@ -1011,6 +1014,10 @@ class FactoryDesigner {
         if (this.connectionManager) {
             this.connectionManager.removeConnectionsForEquipment(placementId);
         }
+        if (element._dragCleanup) {
+            element._dragCleanup();
+            element._dragCleanup = null;
+        }
         this.placedEquipment = this.placedEquipment.filter(item => item.placementId !== placementId);
         element.remove();
     }
@@ -1018,7 +1025,13 @@ class FactoryDesigner {
     clearWorkspace(askConfirm = true) {
         if (askConfirm && !confirm('Очистить рабочую область?')) return;
         const workspace = document.getElementById('workspaceArea');
-        workspace.querySelectorAll('.placed-equipment').forEach(el => el.remove());
+        workspace.querySelectorAll('.placed-equipment').forEach(el => {
+            if (el._dragCleanup) {
+                el._dragCleanup();
+                el._dragCleanup = null;
+            }
+            el.remove();
+        });
         if (this.connectionManager) {
             this.connectionManager.clearAllConnections();
         }
