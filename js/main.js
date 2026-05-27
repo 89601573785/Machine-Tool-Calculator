@@ -143,15 +143,57 @@ class FactoryDesigner {
         }
     }
 
+    resolveApiBase() {
+        const params = window.__leskomConfiguratorParams;
+        if (params?.apiBase) return params.apiBase.replace(/\/$/, '');
+        try {
+            const q = new URLSearchParams(window.location.search);
+            const fromQuery = q.get('apiBase');
+            if (fromQuery) return fromQuery.replace(/\/$/, '');
+        } catch (_) { /* ignore */ }
+        return '/api/v1';
+    }
+
+    async loadFromSiteCatalog() {
+        const apiBase = this.resolveApiBase();
+        const res = await fetch(`${apiBase}/catalog/configurator/equipment`, {
+            credentials: 'include',
+            headers: { Accept: 'application/json' }
+        });
+        if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+        }
+        const body = await res.json();
+        const items = body.items || body;
+        if (!Array.isArray(items)) {
+            throw new Error('Некорректный ответ API каталога');
+        }
+        return items;
+    }
+
     async loadEquipment() {
         try {
             console.log('Начинаю загрузку оборудования...');
             
             let data = null;
             
-            // Сначала пробуем SQLite, но НЕ в file:// режиме (иначе wasm/fetch ловит CORS)
             const isFileProtocol = window.location.protocol === 'file:';
             if (!isFileProtocol) {
+                try {
+                    data = await this.loadFromSiteCatalog();
+                    if (data && data.length > 0) {
+                        console.log('✓ Каталог загружен с сайта ЛЕСКОМ:', data.length, 'поз.');
+                    } else {
+                        data = null;
+                    }
+                } catch (siteError) {
+                    console.warn('Каталог сайта недоступен:', siteError.message);
+                    data = null;
+                }
+            }
+
+            // SQLite — запасной вариант (локальный factory.db)
+            if (!isFileProtocol && !data) {
                 try {
                     data = await this.loadFromSQLite();
                     if (data && data.length > 0) {
@@ -173,7 +215,9 @@ class FactoryDesigner {
             }
             
             if (!data) {
-                throw new Error('Не удалось загрузить данные. Убедитесь, что файл data/factory.db существует.');
+                throw new Error(
+                    'Не удалось загрузить каталог. Импортируйте каталог на сайте (админка → Запарсить) или проверьте data/factory.db.'
+                );
             }
             
             if (!Array.isArray(data)) {
@@ -207,9 +251,9 @@ class FactoryDesigner {
                         <p><strong>Ошибка загрузки данных</strong></p>
                         <p style="font-size: 0.9rem; margin-top: 1rem; color: #6c757d;">
                             <strong>Решение:</strong><br>
-                            1. Убедитесь, что файл <code>data/factory.db</code> существует<br>
-                            2. Если вы открыли файл через <code>file://</code>, запустите страницу через локальный сервер (например, расширение Live Server)<br>
-                            3. Либо используйте резервные данные из <code>js/equipment-data.js</code><br>
+                            1. Импортируйте каталог в БД (админка → «Запарсить сейчас») и перезапустите API<br>
+                            2. Либо положите <code>data/factory.db</code> в папку конфигуратора<br>
+                            3. Если открыли через <code>file://</code> — используйте сайт или Live Server<br>
                             4. Обновите эту страницу (F5)
                         </p>
                         <p style="font-size: 0.8rem; margin-top: 0.5rem; color: #999;">
