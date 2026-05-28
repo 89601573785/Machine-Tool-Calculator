@@ -31,6 +31,16 @@
     background: #fff7ed;
 }
 
+.conveyor-picker-item--empty {
+    border-style: dashed;
+    background: #f8f9fa;
+}
+
+.conveyor-picker-item--empty:hover {
+    background: #eef2f7;
+    border-color: #6c757d;
+}
+
 .conveyor-picker-item.selected {
     border-color: #e67e22;
     background: #ffedd5;

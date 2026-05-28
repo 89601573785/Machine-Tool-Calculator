@@ -1,7 +1,6 @@
 /**
  * Интеграция конфигуратора с ЛК ЛЕСКОМ (iframe + API).
  * Подключать в index.html до main.js
- * ТЗ: docs/CONFIGURATOR-INTEGRATION.md
  */
 (function (global) {
     'use strict';
@@ -18,13 +17,41 @@
     function parseParams(search) {
         const q = new URLSearchParams(search || global.location.search);
         const apiBase = (q.get('apiBase') || '/api/v1').replace(/\/$/, '');
+        const staffHint = q.get('staff') === '1' || q.get('staff') === 'true';
         return {
             embed: q.get('embed') === '1' || q.get('embed') === 'true',
             projectId: q.get('projectId') || null,
             userId: q.get('userId') || getCookie(COOKIE_USER_ID) || null,
             apiBase,
-            parentOrigin: q.get('parentOrigin') || global.location.origin
+            parentOrigin: q.get('parentOrigin') || global.location.origin,
+            staffHint
         };
+    }
+
+    const STAFF_PERMISSIONS = new Set([
+        'configs.manage',
+        'users.manage',
+        'carts.manage',
+        'catalog.manage',
+        'crm.read',
+        'security.manage'
+    ]);
+    const STAFF_ROLES = new Set(['manager', 'superadmin', 'admin']);
+
+    async function resolveStaffAudience(params) {
+        if (params.staffHint) return true;
+        try {
+            const me = await apiFetch(params.apiBase, '/auth/me', {
+                method: 'GET',
+                headers: { Accept: 'application/json' }
+            });
+            const roles = Array.isArray(me?.roles) ? me.roles : [];
+            if (roles.some((r) => STAFF_ROLES.has(String(r)))) return true;
+            const perms = Array.isArray(me?.permissions) ? me.permissions : [];
+            return perms.some((p) => STAFF_PERMISSIONS.has(String(p)));
+        } catch {
+            return false;
+        }
     }
 
     function storageKey(userId, projectId) {
@@ -70,15 +97,20 @@
         );
     }
 
-    function applyEmbedChrome(params) {
-        if (!params.embed) return;
-        global.document.body.classList.add('embed-mode');
-        const instruction = global.document.getElementById('connectionInstruction');
-        if (instruction) instruction.style.display = 'none';
-        const saveCabinet = global.document.getElementById('saveToCabinetBtn');
+    function applySiteChrome() {
+        if (IS_FILE_PROTOCOL) return;
         const titleWrap = global.document.getElementById('projectTitleWrap');
-        if (saveCabinet) saveCabinet.hidden = false;
+        const titleInput = global.document.getElementById('projectTitleInput');
+        const saveBtn = global.document.getElementById('saveProjectBtn');
         if (titleWrap) titleWrap.hidden = false;
+        if (saveBtn) {
+            saveBtn.title = 'Сохранить линию в личный кабинет (видно менеджерам)';
+            const label = saveBtn.querySelector('.btn-label');
+            if (label) label.textContent = ' Сохранить';
+        }
+        if (titleInput && !titleInput.value) {
+            titleInput.placeholder = 'Название линии (например: Лесопильный комплекс)';
+        }
     }
 
     async function loadProjectFromApi(designer, params) {
@@ -102,10 +134,75 @@
         }
     }
 
+    function askProjectTitle(designer, defaultTitle) {
+        return new Promise((resolve, reject) => {
+            const modal = global.document.getElementById('saveProjectModal');
+            const input = global.document.getElementById('saveProjectModalInput');
+            const btnOk = global.document.getElementById('saveProjectModalConfirm');
+            const btnCancel = global.document.getElementById('saveProjectModalCancel');
+            const btnClose = global.document.getElementById('saveProjectModalClose');
+            if (!modal || !input || !btnOk) {
+                resolve((defaultTitle || '').trim() || 'Без названия');
+                return;
+            }
+
+            input.value = defaultTitle || '';
+            modal.style.display = 'block';
+            input.focus();
+            input.select();
+
+            const cleanup = () => {
+                modal.style.display = 'none';
+                btnOk.removeEventListener('click', onOk);
+                btnCancel?.removeEventListener('click', onCancel);
+                btnClose?.removeEventListener('click', onCancel);
+                input.removeEventListener('keydown', onKey);
+            };
+
+            const onOk = () => {
+                const title = input.value.trim();
+                if (!title) {
+                    designer.showNotification?.('Введите название конфигурации', 'warning');
+                    input.focus();
+                    return;
+                }
+                cleanup();
+                resolve(title);
+            };
+
+            const onCancel = () => {
+                cleanup();
+                reject(new Error('cancelled'));
+            };
+
+            const onKey = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    onOk();
+                }
+                if (e.key === 'Escape') {
+                    onCancel();
+                }
+            };
+
+            btnOk.addEventListener('click', onOk);
+            btnCancel?.addEventListener('click', onCancel);
+            btnClose?.addEventListener('click', onCancel);
+            input.addEventListener('keydown', onKey);
+        });
+    }
+
     async function saveProjectToCabinet(designer, params) {
         const titleInput = global.document.getElementById('projectTitleInput');
-        const title = titleInput?.value?.trim() || 'Без названия';
+        const draftTitle = titleInput?.value?.trim() || designer.getProjectTitle?.() || '';
+        const title = await askProjectTitle(designer, draftTitle);
+        if (titleInput) titleInput.value = title;
+
         const project = designer.serializeProject();
+        if (project.version !== 1 && project.version !== 2) {
+            project.version = Array.isArray(project.connections) && project.connections.length ? 2 : 1;
+        }
+        project.title = title;
         const id = global.__leskomProjectId || params.projectId || undefined;
 
         const saved = await apiFetch(params.apiBase, '/configurator/projects', {
@@ -124,6 +221,10 @@
             const userId = params.userId || 'guest';
             designer.projectStorageKey = storageKey(userId, newId);
             try {
+                const raw = localStorage.getItem(designer.projectStorageKey);
+                localStorage.setItem(designer.projectStorageKey, JSON.stringify(project));
+            } catch (_) { /* ignore */ }
+            try {
                 const url = new URL(global.location.href);
                 url.searchParams.set('projectId', newId);
                 global.history.replaceState({}, '', url);
@@ -136,25 +237,29 @@
             updatedAt: saved?.updatedAt || new Date().toISOString()
         });
 
-        designer.showNotification?.('Сохранено в личном кабинете', 'success');
+        designer.showNotification?.('Сохранено — менеджеры увидят вашу линию в админке', 'success');
         return saved;
     }
 
-    function bindSaveToCabinet(designer, params) {
-        const btn = global.document.getElementById('saveToCabinetBtn');
+    function bindSaveButton(designer, params) {
+        const btn = global.document.getElementById('saveProjectBtn');
         if (!btn || btn.dataset.leskomBound === '1') return;
         btn.dataset.leskomBound = '1';
-        btn.addEventListener('click', async () => {
+        btn.addEventListener('click', async (e) => {
+            if (IS_FILE_PROTOCOL) return;
+            e.preventDefault();
+            e.stopImmediatePropagation();
             btn.disabled = true;
             try {
                 await saveProjectToCabinet(designer, params);
-            } catch (e) {
-                console.error('[LeskomConfiguratorIntegration]', e);
-                designer.showNotification?.(e.message || 'Ошибка сохранения', 'error');
+            } catch (err) {
+                if (err?.message === 'cancelled') return;
+                console.error('[LeskomConfiguratorIntegration]', err);
+                designer.showNotification?.(err.message || 'Ошибка сохранения', 'error');
             } finally {
                 btn.disabled = false;
             }
-        });
+        }, true);
     }
 
     /**
@@ -165,24 +270,33 @@
         global.__leskomConfiguratorParams = params;
         global.__leskomProjectId = params.projectId;
 
-        applyEmbedChrome(params);
+        if (designer?.ready) {
+            await designer.ready;
+        }
 
-        // Локальный запуск через file://: API и postMessage недоступны (CORS/origin ограничения)
+        applySiteChrome();
+
+        global.__leskomConfiguratorStaff = params.staffHint;
+        if (!IS_FILE_PROTOCOL) {
+            global.__leskomConfiguratorStaff = await resolveStaffAudience(params);
+        }
+        if (typeof global.mountHowToUseContent === 'function') {
+            global.mountHowToUseContent();
+        }
+
         if (IS_FILE_PROTOCOL) {
-            const saveCabinetBtn = global.document.getElementById('saveToCabinetBtn');
-            if (saveCabinetBtn) saveCabinetBtn.hidden = true;
             return;
         }
 
         const userId = params.userId || 'guest';
         designer.projectStorageKey = storageKey(userId, params.projectId);
 
-        bindSaveToCabinet(designer, params);
+        bindSaveButton(designer, params);
 
         if (params.projectId) {
             try {
                 await loadProjectFromApi(designer, params);
-                designer.showNotification?.('Проект загружен из ЛК', 'success');
+                designer.showNotification?.('Проект загружен', 'success');
             } catch (e) {
                 console.error('[LeskomConfiguratorIntegration] load:', e);
                 designer.showNotification?.(
@@ -195,18 +309,17 @@
 
     const params = parseParams();
     global.__leskomConfiguratorParams = params;
-    if (params.embed && global.document.body) {
-        global.document.body.classList.add('embed-mode');
-    } else if (params.embed) {
-        global.document.addEventListener('DOMContentLoaded', () => {
-            global.document.body.classList.add('embed-mode');
-        });
+    if (!IS_FILE_PROTOCOL && global.document.body) {
+        applySiteChrome();
+    } else if (!IS_FILE_PROTOCOL) {
+        global.document.addEventListener('DOMContentLoaded', applySiteChrome);
     }
 
     global.LeskomConfiguratorIntegration = {
         MESSAGE_SAVED,
         parseParams,
         storageKey,
+        saveProjectToCabinet,
         attach
     };
 })(typeof window !== 'undefined' ? window : globalThis);

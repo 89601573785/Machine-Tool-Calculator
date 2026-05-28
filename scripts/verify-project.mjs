@@ -82,15 +82,15 @@ ok('Вкладки каталога', indexHtml.includes('catalog-tabs'));
 
 const domIds = [
     'equipmentSidebar', 'equipmentCatalog', 'equipmentSearch', 'workspaceArea',
-    'calculateBtn', 'clearWorkspaceBtn', 'saveProjectBtn', 'loadProjectBtn',
-    'exportProjectBtn', 'importProjectBtn', 'projectMenuBtn', 'projectMenuList',
-    'connectModeBtn', 'howToUseBtn', 'howToUseModal', 'howToUseTemplate',
+    'calculateBtn', 'clearWorkspaceBtn', 'saveProjectBtn',
+    'connectModeBtn', 'howToUseBtn', 'howToUseModal', 'howToUseTemplateUser', 'howToUseTemplateStaff',
     'catalogToggleBtn', 'gridCellSizeDisplay',
     'conveyorPickerModal', 'conveyorPickerList', 'calculationChoiceModal',
     'calculationsViewModal', 'projectTitleInput'
 ];
 domIds.forEach(id => ok(`DOM id="${id}"`, indexHtml.includes(`id="${id}"`)));
 ok('saveToCabinetBtn удалён (дублирует Сохранить)', !indexHtml.includes('id="saveToCabinetBtn"'));
+ok('меню Проект удалено', !indexHtml.includes('id="projectMenuWrap"'));
 
 // --- Данные каталога ---
 let equipment = [];

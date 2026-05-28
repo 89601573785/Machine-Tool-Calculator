@@ -24,7 +24,31 @@ class FactoryDesigner {
         this.workspaceHeight = 9000;
         this.nextPlacementId = 1;
         this.projectStorageKey = this.resolveProjectStorageKey();
-        this.init();
+        this.ready = this.init();
+    }
+
+    buildEquipmentLookup() {
+        const byId = new Map();
+        const bySlug = new Map();
+        (this.allEquipment || []).forEach((eq) => {
+            if (eq?.id != null) byId.set(Number(eq.id), eq);
+            const slug = (eq.leskomSlug || '').toString().trim().toLowerCase();
+            if (slug) bySlug.set(slug, eq);
+        });
+        return { byId, bySlug };
+    }
+
+    resolveEquipmentForPlacement(placed, lookup) {
+        if (!placed || !lookup) return null;
+        const id = Number(placed.equipmentId);
+        if (Number.isFinite(id) && lookup.byId.has(id)) {
+            return lookup.byId.get(id);
+        }
+        const slug = (placed.leskomSlug || '').toString().trim().toLowerCase();
+        if (slug && lookup.bySlug.has(slug)) {
+            return lookup.bySlug.get(slug);
+        }
+        return null;
     }
 
     clampPanToBounds() {
@@ -525,6 +549,8 @@ class FactoryDesigner {
                 if (equipment.catalogType === 'equipment_complex') {
                     const summary = window.CatalogMeta?.getComplexSummary(equipment.id) || '';
                     badgeHTML = `<span class="catalog-badge catalog-badge--complex">Комплекс станков</span>${summary ? `<div style="font-size:0.75rem;color:#1e40af;margin-bottom:4px;">${summary}</div>` : ''}`;
+                } else if (equipment.catalogType === 'log_feed') {
+                    badgeHTML = '<span class="catalog-badge catalog-badge--log-feed">Подача бревна</span>';
                 } else if (equipment.catalogType === 'conveyor') {
                     badgeHTML = '<span class="catalog-badge catalog-badge--conveyor">Конвейер · на связи</span>';
                 }
@@ -681,17 +707,17 @@ class FactoryDesigner {
         });
 
         const saveBtn = document.getElementById('saveProjectBtn');
-        const loadBtn = document.getElementById('loadProjectBtn');
-        const exportBtn = document.getElementById('exportProjectBtn');
-        const importBtn = document.getElementById('importProjectBtn');
-        const importInput = document.getElementById('importProjectFileInput');
-
-        if (saveBtn) saveBtn.addEventListener('click', () => this.saveProjectToLocalStorage());
-        if (loadBtn) loadBtn.addEventListener('click', () => this.loadProjectFromLocalStorage());
-        if (exportBtn) exportBtn.addEventListener('click', () => this.exportProjectToFile());
-        if (importBtn && importInput) {
-            importBtn.addEventListener('click', () => importInput.click());
-            importInput.addEventListener('change', (e) => this.importProjectFromFile(e));
+        if (saveBtn) {
+            saveBtn.addEventListener('click', async () => {
+                if (
+                    window.location.protocol !== 'file:' &&
+                    window.LeskomConfiguratorIntegration?.saveProjectToCabinet &&
+                    window.__leskomConfiguratorParams
+                ) {
+                    return;
+                }
+                this.saveProjectToLocalStorage();
+            });
         }
         const howToUseBtn = document.getElementById('howToUseBtn');
         const howToUseModal = document.getElementById('howToUseModal');
@@ -706,37 +732,6 @@ class FactoryDesigner {
             document.getElementById('howToUseCloseBtn')?.addEventListener('click', closeHowToUse);
             howToUseModal.addEventListener('click', (e) => {
                 if (e.target === howToUseModal) closeHowToUse();
-            });
-        }
-        const projectMenuBtn = document.getElementById('projectMenuBtn');
-        const projectMenuWrap = document.getElementById('projectMenuWrap');
-        const projectMenuList = document.getElementById('projectMenuList');
-        const positionProjectMenu = () => {
-            if (!projectMenuBtn || !projectMenuList || !projectMenuWrap?.classList.contains('open')) return;
-            const rect = projectMenuBtn.getBoundingClientRect();
-            projectMenuList.style.top = `${rect.bottom + 6}px`;
-            projectMenuList.style.left = `${rect.left}px`;
-            projectMenuList.style.minWidth = `${Math.max(rect.width, 180)}px`;
-        };
-        const closeProjectMenu = () => {
-            projectMenuWrap?.classList.remove('open');
-        };
-        if (projectMenuBtn && projectMenuWrap && projectMenuList) {
-            projectMenuBtn.addEventListener('click', (e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                projectMenuWrap.classList.toggle('open');
-                if (projectMenuWrap.classList.contains('open')) {
-                    positionProjectMenu();
-                }
-            });
-            projectMenuList.addEventListener('click', (e) => e.stopPropagation());
-            window.addEventListener('resize', positionProjectMenu);
-            window.addEventListener('scroll', positionProjectMenu, true);
-            document.addEventListener('click', (e) => {
-                if (!projectMenuWrap.contains(e.target)) {
-                    closeProjectMenu();
-                }
             });
         }
         const connectModeBtn = document.getElementById('connectModeBtn');
@@ -1207,6 +1202,7 @@ class FactoryDesigner {
             placed: this.placedEquipment.map(p => ({
                 placementId: p.placementId,
                 equipmentId: p.equipmentId,
+                leskomSlug: p.equipment?.leskomSlug || null,
                 x: p.x,
                 y: p.y
             })),
@@ -1265,13 +1261,15 @@ class FactoryDesigner {
             if (zoomLabel) zoomLabel.textContent = Math.round(this.zoom * 100) + '%';
         }
 
-        // Быстрый доступ к оборудованию по id
-        const equipmentById = new Map((this.allEquipment || []).map(eq => [eq.id, eq]));
-
+        const lookup = this.buildEquipmentLookup();
         let maxPlacementId = 0;
+        let missing = 0;
         project.placed.forEach(p => {
-            const eq = equipmentById.get(p.equipmentId);
-            if (!eq) return; // если в данных нет такого оборудования — пропускаем
+            const eq = this.resolveEquipmentForPlacement(p, lookup);
+            if (!eq) {
+                missing += 1;
+                return;
+            }
             const placementId = Number(p.placementId);
             const x = Number(p.x);
             const y = Number(p.y);
@@ -1280,6 +1278,13 @@ class FactoryDesigner {
             if (placementId > maxPlacementId) maxPlacementId = placementId;
         });
         this.nextPlacementId = Math.max(this.nextPlacementId, maxPlacementId + 1);
+
+        if (missing > 0) {
+            this.showNotification(
+                `Не найдено в каталоге: ${missing} из ${project.placed.length} станков`,
+                'warning'
+            );
+        }
 
         // Восстанавливаем соединения
         if (this.connectionManager && Array.isArray(project.connections)) {
@@ -1509,6 +1514,7 @@ class FactoryDesigner {
         let totalProduction = 0;
         let totalPower = 0;
         let totalCost = 0;
+        let equipmentCostUnknownCount = 0;
         let totalInstallationCost = 0;
         let totalArea = 0;
         let totalDailyOperationCost = 0;
@@ -1525,18 +1531,25 @@ class FactoryDesigner {
         
         this.placedEquipment.forEach(item => {
             const eq = item.equipment;
+            if (
+                eq.catalogType === 'conveyor'
+                || eq.catalogType === 'log_feed'
+                || window.CatalogMeta?.isConveyorLike?.(eq)
+                || window.CatalogMeta?.isLogFeedLike?.(eq)
+            ) {
+                return;
+            }
             const production = (eq.productivity || 0) * (eq.efficiency || 0.85);
             totalProduction += production;
             totalPower += eq.power_consumption || 0;
             
-            // Проверяем цену для предупреждений
-            if (eq.cost === 0 || (eq.price && eq.price.includes('Цена по запросу'))) {
+            const priceOnRequest = eq.cost === 0 || (eq.price && eq.price.includes('Цена по запросу'));
+            if (priceOnRequest) {
                 priceWarnings.push({
                     name: eq.name,
                     price: eq.price || 'Цена по запросу'
                 });
-                // Если цена по запросу, не добавляем стоимость в общую сумму
-                totalCost += 0;
+                equipmentCostUnknownCount += 1;
             } else {
                 totalCost += eq.cost || 0;
             }
@@ -1577,7 +1590,8 @@ class FactoryDesigner {
                 name: eq.name,
                 production: production,
                 power: eq.power_consumption || 0,
-                cost: eq.cost || 0,
+                cost: priceOnRequest ? null : (eq.cost || 0),
+                price_on_request: priceOnRequest,
                 installation_cost: eq.installation_cost || 0,
                 speed: eq.speed || 1.0,
                 cycle_time: eq.cycle_time || 60,
@@ -1616,9 +1630,13 @@ class FactoryDesigner {
         const calculations = {
             final_production: totalProduction,
             total_energy: totalPower,
+            equipment_cost_total: totalCost,
+            equipment_cost_unknown_count: equipmentCostUnknownCount,
             total_cost: totalCost,
             installation_cost_total: totalInstallationCost,
+            conveyor_cost_total: 0,
             total_cost_with_installation: totalAllCosts,
+            line_total_cost: totalAllCosts,
             total_area: totalArea,
             recommended_area: totalArea * 1.5, // Площадь с учетом проходов
             equipment_count: this.placedEquipment.length,
@@ -1647,8 +1665,15 @@ class FactoryDesigner {
     }
 }
 
+function isStaffHowToAudience() {
+    if (window.__leskomConfiguratorStaff === true) return true;
+    const q = new URLSearchParams(window.location.search);
+    return q.get('staff') === '1' || q.get('staff') === 'true';
+}
+
 function mountHowToUseContent() {
-    const tpl = document.getElementById('howToUseTemplate');
+    const tplId = isStaffHowToAudience() ? 'howToUseTemplateStaff' : 'howToUseTemplateUser';
+    const tpl = document.getElementById(tplId);
     if (!tpl) return;
     const html = tpl.innerHTML;
     const modalBody = document.getElementById('howToUseModalBody');
@@ -1656,6 +1681,7 @@ function mountHowToUseContent() {
     if (modalBody) modalBody.innerHTML = html;
     if (instructionContent) instructionContent.innerHTML = html;
 }
+window.mountHowToUseContent = mountHowToUseContent;
 
 function toggleInstruction() {
     document.getElementById('connectionInstruction').classList.toggle('collapsed');
@@ -1667,6 +1693,120 @@ function closeCalculationChoiceModal() {
 
 function closeCalculationsViewModal() {
     document.getElementById('calculationsViewModal').style.display = 'none';
+}
+
+function formatCalcMoney(amount) {
+    return `${Number(amount || 0).toLocaleString('ru-RU')} руб`;
+}
+
+function getEquipmentCostTotal(calc) {
+    return Number(calc?.equipment_cost_total ?? calc?.total_cost) || 0;
+}
+
+function formatEquipmentCostSummary(calc, { html = true } = {}) {
+    const total = getEquipmentCostTotal(calc);
+    const unknown = Number(calc?.equipment_cost_unknown_count) || 0;
+    if (unknown > 0 && total === 0) {
+        return html ? '<span style="color:#856404;">Цена по запросу</span>' : 'Цена по запросу';
+    }
+    if (unknown > 0) {
+        const note = ` (+ ${unknown} по запросу)`;
+        return html
+            ? `${formatCalcMoney(total)} <span style="font-size:0.85em;color:#856404;">${note}</span>`
+            : `${formatCalcMoney(total)}${note}`;
+    }
+    return formatCalcMoney(total);
+}
+
+function formatEquipmentRowCost(eq) {
+    if (eq.price_on_request || eq.cost == null) {
+        return '<span style="color:#856404;">По запросу</span>';
+    }
+    return formatCalcMoney(eq.cost);
+}
+
+function getConveyorCostTotal(calc) {
+    return Number(calc?.conveyor_cost_total) || 0;
+}
+
+function formatConveyorCostSummary(calc, { html = true } = {}) {
+    const list = calc?.conveyor_list;
+    if (!list || list.length === 0) {
+        return html ? '—' : '—';
+    }
+    const total = getConveyorCostTotal(calc);
+    const unknown = Number(calc?.conveyor_cost_unknown_count) || 0;
+    if (unknown > 0 && total === 0) {
+        return html ? '<span style="color:#856404;">Цена по запросу</span>' : 'Цена по запросу';
+    }
+    if (unknown > 0) {
+        const note = ` (+ ${unknown} по запросу)`;
+        return html
+            ? `${formatCalcMoney(total)} <span style="font-size:0.85em;color:#856404;">${note}</span>`
+            : `${formatCalcMoney(total)}${note}`;
+    }
+    return formatCalcMoney(total);
+}
+
+function formatConveyorRowCost(cv) {
+    if (cv.price_on_request || cv.cost == null) {
+        return '<span style="color:#856404;">По запросу</span>';
+    }
+    return formatCalcMoney(cv.cost);
+}
+
+function getLogFeedCostTotal(calc) {
+    return Number(calc?.log_feed_cost_total) || 0;
+}
+
+function formatLogFeedCostSummary(calc, { html = true } = {}) {
+    const list = calc?.log_feed_list;
+    if (!list || list.length === 0) {
+        return html ? '—' : '—';
+    }
+    const total = getLogFeedCostTotal(calc);
+    const unknown = Number(calc?.log_feed_cost_unknown_count) || 0;
+    if (unknown > 0 && total === 0) {
+        return html ? '<span style="color:#856404;">Цена по запросу</span>' : 'Цена по запросу';
+    }
+    if (unknown > 0) {
+        const note = ` (+ ${unknown} по запросу)`;
+        return html
+            ? `${formatCalcMoney(total)} <span style="font-size:0.85em;color:#856404;">${note}</span>`
+            : `${formatCalcMoney(total)}${note}`;
+    }
+    return formatCalcMoney(total);
+}
+
+function formatLogFeedRowCost(lf) {
+    if (lf.price_on_request || lf.cost == null) {
+        return '<span style="color:#856404;">По запросу</span>';
+    }
+    return formatCalcMoney(lf.cost);
+}
+
+function renderCostTableSection(title, columns, rows, footerLabel, footerValue) {
+    return `
+        <div class="calc-section" style="margin-bottom: 2rem;">
+            <h4 style="margin-bottom: 1rem; color: #5d4e37;">${title}</h4>
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                    <thead>
+                        <tr style="background: #8b6f47; color: white;">
+                            ${columns.map(col => `<th style="padding: 0.75rem; text-align: ${col.align || 'left'}; border: 1px solid #ddd;">${col.label}</th>`).join('')}
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                    <tfoot>
+                        <tr style="background: #e8dfd0; font-weight: 700;">
+                            <td style="padding: 0.75rem; border: 1px solid #ddd;" colspan="${columns.length - 1}">${footerLabel}</td>
+                            <td style="padding: 0.75rem; text-align: right; border: 1px solid #ddd;">${footerValue}</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    `;
 }
 
 function viewCalculations() {
@@ -1687,15 +1827,15 @@ function viewCalculations() {
             </div>
             <div class="calculation-item">
                 <div class="label">Стоимость оборудования:</div>
-                <div class="value">${calc.total_cost.toLocaleString()} руб</div>
+                <div class="value">${formatEquipmentCostSummary(calc)}</div>
             </div>
             <div class="calculation-item">
                 <div class="label">Стоимость установки:</div>
-                <div class="value">${calc.installation_cost_total.toLocaleString()} руб</div>
+                <div class="value">${formatCalcMoney(calc.installation_cost_total)}</div>
             </div>
             <div class="calculation-item">
                 <div class="label">Общая стоимость:</div>
-                <div class="value">${calc.total_cost_with_installation.toLocaleString()} руб</div>
+                <div class="value">${formatCalcMoney(calc.line_total_cost ?? calc.total_cost_with_installation)}</div>
             </div>
             <div class="calculation-item">
                 <div class="label">Площадь:</div>
@@ -1711,6 +1851,17 @@ function viewCalculations() {
             </div>
         </div>
     `;
+
+    if (calc.price_warnings && calc.price_warnings.length > 0) {
+        html += `
+            <div class="calc-section" style="margin-bottom: 1.5rem; padding: 1rem; background: #f8d7da; border-radius: 8px; border-left: 4px solid #dc3545;">
+                <h4 style="margin-bottom: 0.5rem; color: #721c24;">Цены по запросу</h4>
+                <ul style="margin: 0; padding-left: 1.25rem; color: #721c24;">
+                    ${calc.price_warnings.map(w => `<li>${escapeReportHtml(w.name)}</li>`).join('')}
+                </ul>
+            </div>
+        `;
+    }
     
     if (calc.bottleneck_equipment && calc.bottleneck_equipment !== 'Нет') {
         html += `
@@ -1783,45 +1934,65 @@ function viewCalculations() {
         `;
     }
 
-    if (calc.conveyor_list && calc.conveyor_list.length > 0) {
-        html += `
-            <div class="calc-section" style="margin-bottom: 2rem;">
-                <h4 style="margin-bottom: 1rem; color: #5d4e37;">Конвейеры на связях</h4>
-                <ul style="list-style: none; padding: 0;">
-                    ${calc.conveyor_list.map((cv, idx) => `
-                        <li style="padding: 0.5rem; background: #ffedd5; margin-bottom: 0.5rem; border-radius: 4px; border-left: 3px solid #e67e22;">
-                            <strong>${idx + 1}. ${cv.name}</strong><br>
-                            <span style="font-size:0.9em;color:#666;">${cv.from} → ${cv.to}</span>
-                        </li>
-                    `).join('')}
-                </ul>
-            </div>
-        `;
+    const equipmentRows = calc.equipment_list.map((eq, idx) => `
+        <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">
+            <td style="padding: 0.75rem; border: 1px solid #ddd;"><strong>${escapeReportHtml(eq.name)}</strong></td>
+            <td style="padding: 0.75rem; text-align: right; border: 1px solid #ddd;">${formatEquipmentRowCost(eq)}</td>
+        </tr>
+    `).join('');
+
+    html += renderCostTableSection(
+        'Детальная информация по оборудованию',
+        [
+            { label: 'Станок', align: 'left' },
+            { label: 'Стоимость (руб)', align: 'right' }
+        ],
+        equipmentRows,
+        'Итого по станкам',
+        formatEquipmentCostSummary(calc)
+    );
+
+    if (calc.log_feed_list && calc.log_feed_list.length > 0) {
+        const logFeedRows = calc.log_feed_list.map((lf, idx) => `
+            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">
+                <td style="padding: 0.75rem; border: 1px solid #ddd;"><strong>${escapeReportHtml(lf.name)}</strong></td>
+                <td style="padding: 0.75rem; text-align: right; border: 1px solid #ddd;">${formatLogFeedRowCost(lf)}</td>
+            </tr>
+        `).join('');
+
+        html += renderCostTableSection(
+            'Подача бревна (на схеме)',
+            [
+                { label: 'Оборудование', align: 'left' },
+                { label: 'Стоимость (руб)', align: 'right' }
+            ],
+            logFeedRows,
+            'Итого по подаче бревна',
+            formatLogFeedCostSummary(calc)
+        );
     }
-    
-    html += `
-        <div class="calc-section">
-            <h4 style="margin-bottom: 1rem; color: #5d4e37;">Детальная информация по оборудованию</h4>
-            <div style="overflow-x: auto;">
-                <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
-                    <thead>
-                        <tr style="background: #8b6f47; color: white;">
-                            <th style="padding: 0.75rem; text-align: left; border: 1px solid #ddd;">Станок</th>
-                            <th style="padding: 0.75rem; text-align: right; border: 1px solid #ddd;">Стоимость (руб)</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${calc.equipment_list.map((eq, idx) => `
-                            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">
-                                <td style="padding: 0.75rem; border: 1px solid #ddd;"><strong>${eq.name}</strong></td>
-                                <td style="padding: 0.75rem; text-align: right; border: 1px solid #ddd;">${eq.cost.toLocaleString()}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    `;
+
+    if (calc.conveyor_list && calc.conveyor_list.length > 0) {
+        const conveyorRows = calc.conveyor_list.map((cv, idx) => `
+            <tr style="background: ${idx % 2 === 0 ? '#fff' : '#f8f9fa'};">
+                <td style="padding: 0.75rem; border: 1px solid #ddd;"><strong>${escapeReportHtml(cv.name)}</strong></td>
+                <td style="padding: 0.75rem; border: 1px solid #ddd; color: #666;">${escapeReportHtml(cv.route || `${cv.from} → ${cv.to}`)}</td>
+                <td style="padding: 0.75rem; text-align: right; border: 1px solid #ddd;">${formatConveyorRowCost(cv)}</td>
+            </tr>
+        `).join('');
+
+        html += renderCostTableSection(
+            'Конвейеры на связях',
+            [
+                { label: 'Конвейер', align: 'left' },
+                { label: 'Маршрут', align: 'left' },
+                { label: 'Стоимость (руб)', align: 'right' }
+            ],
+            conveyorRows,
+            'Итого по конвейерам',
+            formatConveyorCostSummary(calc)
+        );
+    }
     
     content.innerHTML = html;
     document.getElementById('calculationsViewModal').style.display = 'block';
@@ -1835,8 +2006,10 @@ function escapeReportHtml(value) {
         .replace(/"/g, '&quot;');
 }
 
-function pdfSectionTitle(title) {
-    return `<h2 style="font-size:13px;color:#8b6f47;margin:0 0 6px;border-bottom:1px solid #8b6f47;padding-bottom:3px;font-weight:700;">${escapeReportHtml(title)}</h2>`;
+function pdfSectionTitle(title, compact = true) {
+    const fs = compact ? 10 : 13;
+    const mb = compact ? 3 : 6;
+    return `<h2 style="font-size:${fs}px;color:#8b6f47;margin:0 0 ${mb}px;border-bottom:1px solid #8b6f47;padding-bottom:2px;font-weight:700;">${escapeReportHtml(title)}</h2>`;
 }
 
 function pdfTableHeader(cells) {
@@ -1856,8 +2029,13 @@ const PDF_PADDING_PX = 22;
 const PDF_PAGE_MAX_HEIGHT_PX = Math.floor(((297 - 14) / 25.4) * 96);
 const PDF_FONT_STACK = "'Segoe UI', Arial, 'Helvetica Neue', sans-serif";
 
-function pdfWrapSection(inner) {
-    return `<div class="pdf-section" style="margin-bottom:8px;">${inner}</div>`;
+function pdfWrapSection(inner, compact = true) {
+    const mb = compact ? 4 : 8;
+    return `<div class="pdf-section" style="margin-bottom:${mb}px;">${inner}</div>`;
+}
+
+function pdfWrapSectionRow(sections) {
+    return pdfWrapSection(`<div style="display:flex;gap:6px;align-items:flex-start;">${sections.join('')}</div>`);
 }
 
 function pdfTableOpen(colWidths = []) {
@@ -1882,18 +2060,19 @@ function chunkRows(rows, size) {
 
 function buildPdfReportSections(calc) {
     const hasPriceRequest = calc.price_warnings && calc.price_warnings.length > 0;
-    const totalCostDisplay = hasPriceRequest
+    const equipmentTotal = getEquipmentCostTotal(calc);
+    const equipmentCostDisplay = formatEquipmentCostSummary(calc, { html: false });
+    const lineTotal = Number(calc.line_total_cost ?? calc.total_cost_with_installation) || 0;
+    const totalWithInstallDisplay = hasPriceRequest && equipmentTotal === 0
         ? 'Цена по запросу'
-        : `${Number(calc.total_cost || 0).toLocaleString('ru-RU')} руб`;
-    const totalWithInstallDisplay = hasPriceRequest
-        ? 'Цена по запросу'
-        : `${Number(calc.total_cost_with_installation || 0).toLocaleString('ru-RU')} руб`;
+        : formatCalcMoney(lineTotal);
     const sections = [];
+    const logFeedCount = calc.log_feed_count || (calc.log_feed_list?.length ?? 0);
 
     sections.push(pdfWrapSection(`
-        <div style="text-align:center;margin-bottom:4px;">
-            <h1 style="font-size:15px;color:#5d4e37;margin:0 0 4px;font-family:${PDF_FONT_STACK};">Отчёт о расчёте производственного цеха</h1>
-            <p style="font-size:9px;color:#666;margin:0;font-family:${PDF_FONT_STACK};">Дата: ${escapeReportHtml(new Date().toLocaleString('ru-RU'))}</p>
+        <div style="text-align:center;margin-bottom:2px;">
+            <h1 style="font-size:13px;color:#5d4e37;margin:0 0 2px;font-family:${PDF_FONT_STACK};">Отчёт о расчёте производственного цеха</h1>
+            <p style="font-size:7.5px;color:#666;margin:0;font-family:${PDF_FONT_STACK};">Дата: ${escapeReportHtml(new Date().toLocaleString('ru-RU'))}</p>
         </div>
     `));
 
@@ -1903,14 +2082,13 @@ function buildPdfReportSections(calc) {
             ${pdfTableHeader(['<span style="text-align:left;display:block;">Показатель</span>', '<span style="text-align:right;display:block;">Значение</span>'])}
             ${pdfTableRow(['Производительность линии', `${Number(calc.final_production || 0).toFixed(2)} м³/смену`], 0, ['left', 'right'])}
             ${pdfTableRow(['Энергопотребление', `${Number(calc.total_energy || 0).toFixed(2)} кВт`], 1, ['left', 'right'])}
-            ${pdfTableRow(['Стоимость оборудования', totalCostDisplay], 2, ['left', 'right'])}
-            ${pdfTableRow(['Стоимость установки', `${Number(calc.installation_cost_total || 0).toLocaleString('ru-RU')} руб`], 3, ['left', 'right'])}
-            ${pdfTableRow(['Общая стоимость', totalWithInstallDisplay], 4, ['left', 'right'])}
-            ${pdfTableRow(['Площадь', `${Number(calc.total_area || 0).toFixed(2)} м²`], 5, ['left', 'right'])}
-            ${pdfTableRow(['Площадь с проходами', `${Math.round(Number(calc.recommended_area || calc.total_area * 1.5))} м²`], 6, ['left', 'right'])}
-            ${pdfTableRow(['Количество станков', String(calc.equipment_count || 0)], 7, ['left', 'right'])}
-            ${pdfTableRow(['Соединений', calc.connections_count > 0 ? String(calc.connections_count) : 'Нет'], 8, ['left', 'right'])}
-            ${calc.conveyor_count ? pdfTableRow(['Конвейеров', String(calc.conveyor_count)], 9, ['left', 'right']) : ''}
+            ${pdfTableRow(['Станки', equipmentCostDisplay], 2, ['left', 'right'])}
+            ${logFeedCount ? pdfTableRow(['Подача бревна', formatLogFeedCostSummary(calc, { html: false })], 3, ['left', 'right']) : ''}
+            ${(calc.conveyor_count || 0) > 0 ? pdfTableRow(['Конвейеры на связях', formatConveyorCostSummary(calc, { html: false })], 4, ['left', 'right']) : ''}
+            ${pdfTableRow(['Стоимость установки', formatCalcMoney(calc.installation_cost_total)], 5, ['left', 'right'])}
+            ${pdfTableRow(['Общая стоимость', totalWithInstallDisplay], 6, ['left', 'right'])}
+            ${pdfTableRow(['Площадь / с проходами', `${Number(calc.total_area || 0).toFixed(2)} / ${Math.round(Number(calc.recommended_area || calc.total_area * 1.5))} м²`], 7, ['left', 'right'])}
+            ${pdfTableRow(['Станков / связей', `${calc.equipment_count || 0} / ${calc.connections_count > 0 ? calc.connections_count : '0'}`], 8, ['left', 'right'])}
         </table>
     `));
 
@@ -1921,6 +2099,34 @@ function buildPdfReportSections(calc) {
         `));
     }
 
+    const sideBlocks = [];
+
+    if (calc.input_materials && Object.keys(calc.input_materials).length > 0) {
+        const matRows = Object.entries(calc.input_materials).map(([name, qty], idx) => pdfTableRow([
+            escapeReportHtml(name),
+            Number(qty || 0).toFixed(2)
+        ], idx, ['left', 'right'])).join('');
+        sideBlocks.push(`<div style="flex:1;min-width:0;">${pdfSectionTitle('Сырьё, м³/смену')}
+            ${pdfTableOpen(['62%', '38%'])}
+            ${pdfTableHeader(['Материал', '<span style="text-align:right;display:block;">Кол-во</span>'])}
+            ${matRows}</table></div>`);
+    }
+
+    if (calc.output_materials && Object.keys(calc.output_materials).length > 0) {
+        const outRows = Object.entries(calc.output_materials).map(([name, qty], idx) => pdfTableRow([
+            escapeReportHtml(name),
+            Number(qty || 0).toFixed(2)
+        ], idx, ['left', 'right'])).join('');
+        sideBlocks.push(`<div style="flex:1;min-width:0;">${pdfSectionTitle('Продукция, м³/смену')}
+            ${pdfTableOpen(['62%', '38%'])}
+            ${pdfTableHeader(['Продукция', '<span style="text-align:right;display:block;">Кол-во</span>'])}
+            ${outRows}</table></div>`);
+    }
+
+    if (sideBlocks.length) {
+        sections.push(pdfWrapSectionRow(sideBlocks));
+    }
+
     if (calc.connections_info && calc.connections_info.length > 0) {
         const connRows = calc.connections_info.map((conn, idx) => pdfTableRow([
             String(idx + 1),
@@ -1928,21 +2134,33 @@ function buildPdfReportSections(calc) {
             escapeReportHtml(conn.to),
             escapeReportHtml(conn.conveyor || '—'),
             Number(conn.throughput || 0).toFixed(2)
-        ], idx, ['center', 'left', 'left', 'left', 'right']));
-        chunkRows(connRows, 14).forEach((rows, chunkIdx, arr) => {
-            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
-            sections.push(pdfWrapSection(`
-                ${pdfSectionTitle(`Связи между станками${suffix}`)}
-                ${pdfTableOpen(['6%', '24%', '24%', '28%', '18%'])}
-                    ${pdfTableHeader(['<span style="text-align:center;display:block;">№</span>', 'От', 'К', 'Конвейер', '<span style="text-align:right;display:block;">м³/смену</span>'])}
-                    ${rows.join('')}
-                </table>
-            `));
-        });
-    } else if ((calc.equipment_count || 0) > 1) {
+        ], idx, ['center', 'left', 'left', 'left', 'right'])).join('');
         sections.push(pdfWrapSection(`
             ${pdfSectionTitle('Связи между станками')}
-            <p style="margin:0;color:#856404;font-size:8.5px;font-family:${PDF_FONT_STACK};">Соединений нет. Рекомендуется связать станки для расчёта линии.</p>
+            ${pdfTableOpen(['5%', '22%', '22%', '33%', '18%'])}
+                ${pdfTableHeader(['№', 'От', 'К', 'Конвейер', '<span style="text-align:right;display:block;">м³/смену</span>'])}
+                ${connRows}
+            </table>
+        `));
+    }
+
+    if (calc.log_feed_list && calc.log_feed_list.length > 0) {
+        const lfRows = calc.log_feed_list.map((lf, idx) => pdfTableRow([
+            String(idx + 1),
+            escapeReportHtml(lf.name),
+            lf.price_on_request || lf.cost == null ? 'По запросу' : Number(lf.cost).toLocaleString('ru-RU')
+        ], idx, ['center', 'left', 'right'])).join('');
+        const lfFooter = pdfTableRow(
+            ['', '<strong>Итого</strong>', escapeReportHtml(formatLogFeedCostSummary(calc, { html: false }))],
+            calc.log_feed_list.length,
+            ['center', 'left', 'right']
+        );
+        sections.push(pdfWrapSection(`
+            ${pdfSectionTitle('Подача бревна')}
+            ${pdfTableOpen(['6%', '64%', '30%'])}
+                ${pdfTableHeader(['№', 'Оборудование', '<span style="text-align:right;display:block;">руб</span>'])}
+                ${lfRows}${lfFooter}
+            </table>
         `));
     }
 
@@ -1950,74 +2168,47 @@ function buildPdfReportSections(calc) {
         const cvRows = calc.conveyor_list.map((cv, idx) => pdfTableRow([
             String(idx + 1),
             escapeReportHtml(cv.name),
-            `${escapeReportHtml(cv.from)} → ${escapeReportHtml(cv.to)}`,
-            Number(cv.power || 0).toFixed(2),
-            cv.cost > 0 ? Number(cv.cost).toLocaleString('ru-RU') : '—'
-        ], idx, ['center', 'left', 'left', 'right', 'right']));
-        chunkRows(cvRows, 12).forEach((rows, chunkIdx, arr) => {
-            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
-            sections.push(pdfWrapSection(`
-                ${pdfSectionTitle(`Конвейеры на связях${suffix}`)}
-                ${pdfTableOpen(['6%', '30%', '38%', '12%', '14%'])}
-                    ${pdfTableHeader(['<span style="text-align:center;display:block;">№</span>', 'Конвейер', 'Маршрут', '<span style="text-align:right;display:block;">кВт</span>', '<span style="text-align:right;display:block;">руб</span>'])}
-                    ${rows.join('')}
-                </table>
-            `));
-        });
-    }
-
-    if (calc.input_materials && Object.keys(calc.input_materials).length > 0) {
-        const matRows = Object.entries(calc.input_materials).map(([name, qty], idx) => pdfTableRow([
-            escapeReportHtml(name),
-            Number(qty || 0).toFixed(2)
-        ], idx, ['left', 'right']));
-        chunkRows(matRows, 18).forEach((rows, chunkIdx, arr) => {
-            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
-            sections.push(pdfWrapSection(`
-                ${pdfSectionTitle(`Потребление сырья (м³/смену)${suffix}`)}
-                ${pdfTableOpen(['68%', '32%'])}
-                    ${pdfTableHeader(['Материал', '<span style="text-align:right;display:block;">Количество</span>'])}
-                    ${rows.join('')}
-                </table>
-            `));
-        });
-    }
-
-    if (calc.output_materials && Object.keys(calc.output_materials).length > 0) {
-        const outRows = Object.entries(calc.output_materials).map(([name, qty], idx) => pdfTableRow([
-            escapeReportHtml(name),
-            Number(qty || 0).toFixed(2)
-        ], idx, ['left', 'right']));
-        chunkRows(outRows, 18).forEach((rows, chunkIdx, arr) => {
-            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
-            sections.push(pdfWrapSection(`
-                ${pdfSectionTitle(`Выпуск продукции (м³/смену)${suffix}`)}
-                ${pdfTableOpen(['68%', '32%'])}
-                    ${pdfTableHeader(['Продукция', '<span style="text-align:right;display:block;">Количество</span>'])}
-                    ${rows.join('')}
-                </table>
-            `));
-        });
+            escapeReportHtml(cv.route || `${cv.from} → ${cv.to}`),
+            cv.price_on_request || cv.cost == null
+                ? 'По запросу'
+                : Number(cv.cost).toLocaleString('ru-RU')
+        ], idx, ['center', 'left', 'left', 'right'])).join('');
+        const cvFooter = pdfTableRow(
+            ['', '<strong>Итого</strong>', '', escapeReportHtml(formatConveyorCostSummary(calc, { html: false }))],
+            calc.conveyor_list.length,
+            ['center', 'left', 'left', 'right']
+        );
+        sections.push(pdfWrapSection(`
+            ${pdfSectionTitle('Конвейеры на связях')}
+            ${pdfTableOpen(['5%', '30%', '45%', '20%'])}
+                ${pdfTableHeader(['№', 'Конвейер', 'Маршрут', '<span style="text-align:right;display:block;">руб</span>'])}
+                ${cvRows}${cvFooter}
+            </table>
+        `));
     }
 
     if (calc.equipment_list && calc.equipment_list.length > 0) {
         const eqRows = calc.equipment_list.map((eq, idx) => pdfTableRow([
             String(idx + 1),
             escapeReportHtml(eq.name),
-            `${Number(eq.production || 0).toFixed(2)} м³/смену`,
-            Number(eq.power || 0).toFixed(2),
-            Number(eq.cost || 0) > 0 ? Number(eq.cost).toLocaleString('ru-RU') : 'По запросу'
-        ], idx, ['center', 'left', 'right', 'right', 'right']));
-        chunkRows(eqRows, 14).forEach((rows, chunkIdx, arr) => {
-            const suffix = arr.length > 1 ? ` (${chunkIdx + 1}/${arr.length})` : '';
-            sections.push(pdfWrapSection(`
-                ${pdfSectionTitle(`Оборудование${suffix}`)}
-                ${pdfTableOpen(['6%', '34%', '22%', '14%', '24%'])}
-                    ${pdfTableHeader(['<span style="text-align:center;display:block;">№</span>', 'Станок', '<span style="text-align:right;display:block;">Производительность</span>', '<span style="text-align:right;display:block;">кВт</span>', '<span style="text-align:right;display:block;">руб</span>'])}
-                    ${rows.join('')}
-                </table>
-            `));
-        });
+            `${Number(eq.production || 0).toFixed(2)}`,
+            Number(eq.power || 0).toFixed(1),
+            eq.price_on_request || eq.cost == null
+                ? 'По запросу'
+                : Number(eq.cost).toLocaleString('ru-RU')
+        ], idx, ['center', 'left', 'right', 'right', 'right'])).join('');
+        const eqFooter = pdfTableRow(
+            ['', '<strong>Итого по станкам</strong>', '', '', escapeReportHtml(formatEquipmentCostSummary(calc, { html: false }))],
+            calc.equipment_list.length,
+            ['center', 'left', 'right', 'right', 'right']
+        );
+        sections.push(pdfWrapSection(`
+            ${pdfSectionTitle('Станки')}
+            ${pdfTableOpen(['5%', '38%', '19%', '14%', '24%'])}
+                ${pdfTableHeader(['№', 'Станок', '<span style="text-align:right;display:block;">м³/смену</span>', '<span style="text-align:right;display:block;">кВт</span>', '<span style="text-align:right;display:block;">руб</span>'])}
+                ${eqRows}${eqFooter}
+            </table>
+        `));
     }
 
     if (hasPriceRequest) {
@@ -2038,13 +2229,20 @@ function buildPdfReportSections(calc) {
 
 function paginatePdfSections(sections) {
     const measureBox = document.createElement('div');
-    measureBox.style.cssText = `position:fixed;left:0;top:0;transform:translateX(-200vw);width:${PDF_A4_WIDTH_PX}px;padding:${PDF_PADDING_PX}px;box-sizing:border-box;visibility:hidden;pointer-events:none;`;
+    measureBox.style.cssText = `position:fixed;left:0;top:0;transform:translateX(-200vw);width:${PDF_A4_WIDTH_PX}px;padding:${PDF_PADDING_PX}px;box-sizing:border-box;visibility:hidden;pointer-events:none;font-family:${PDF_FONT_STACK};font-size:8px;line-height:1.25;`;
     document.body.appendChild(measureBox);
 
     const measure = (html) => {
         measureBox.innerHTML = html;
         return measureBox.offsetHeight;
     };
+
+    const fullHtml = sections.join('');
+    const fullHeight = measure(fullHtml);
+    if (fullHeight <= PDF_PAGE_MAX_HEIGHT_PX) {
+        document.body.removeChild(measureBox);
+        return [fullHtml];
+    }
 
     const pages = [];
     let current = [];
@@ -2163,6 +2361,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     mountHowToUseContent();
     factoryDesignerInstance = new FactoryDesigner();
     window.factoryDesigner = factoryDesignerInstance;
+    await factoryDesignerInstance.ready;
     if (window.LeskomConfiguratorIntegration?.attach) {
         try {
             await window.LeskomConfiguratorIntegration.attach(factoryDesignerInstance);

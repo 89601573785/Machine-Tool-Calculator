@@ -98,8 +98,30 @@ class ConnectionManager {
 
         const conveyors = this.getConveyorList();
         list.innerHTML = '';
+
+        const emptyBtn = document.createElement('button');
+        emptyBtn.type = 'button';
+        emptyBtn.className = 'conveyor-picker-item conveyor-picker-item--empty';
+        emptyBtn.innerHTML = `
+            <div class="conveyor-picker-item__head">
+                <strong><i class="fas fa-minus"></i> Без конвейера</strong>
+                <span>Пустое соединение</span>
+            </div>
+            <div class="conveyor-picker-item__meta">
+                <span>Только связь станков, без транспортёра в расчёте</span>
+            </div>
+        `;
+        emptyBtn.addEventListener('click', () => {
+            modal.style.display = 'none';
+            if (onSelect) onSelect(null);
+        });
+        list.appendChild(emptyBtn);
+
         if (conveyors.length === 0) {
-            list.innerHTML = '<p style="padding:1rem;color:#666;">Конвейеры не найдены в каталоге.</p>';
+            const note = document.createElement('p');
+            note.style.cssText = 'padding:0.75rem 1rem;color:#666;font-size:0.9rem;';
+            note.textContent = 'В каталоге нет конвейеров — можно использовать пустое соединение.';
+            list.appendChild(note);
         } else {
             conveyors.forEach(cv => {
                 const btn = document.createElement('button');
@@ -176,11 +198,16 @@ class ConnectionManager {
             const conn = this.connections.find(c => c.id === connectionId);
             if (!conn) return;
             this.showConveyorPickerModal(catalogId => {
-                conn.conveyorCatalogId = catalogId;
-                const cv = this.getConveyorById(catalogId);
-                conn.conveyorName = cv?.name || 'Конвейер';
+                conn.conveyorCatalogId = catalogId ?? null;
+                if (catalogId == null) {
+                    conn.conveyorName = null;
+                    this.showNotification('Соединение без конвейера', 'success');
+                } else {
+                    const cv = this.getConveyorById(catalogId);
+                    conn.conveyorName = cv?.name || 'Конвейер';
+                    this.showNotification('Конвейер обновлён', 'success');
+                }
                 this.drawConnection(conn);
-                this.showNotification('Конвейер обновлён', 'success');
             });
         });
 
@@ -227,7 +254,8 @@ class ConnectionManager {
         }
 
         const finish = (conveyorCatalogId) => {
-            const cv = this.getConveyorById(conveyorCatalogId);
+            const hasConveyor = conveyorCatalogId != null && conveyorCatalogId !== '';
+            const cv = hasConveyor ? this.getConveyorById(conveyorCatalogId) : null;
             const connectionId = Date.now() + Math.floor(Math.random() * 1000);
             const connection = {
                 id: connectionId,
@@ -236,17 +264,20 @@ class ConnectionManager {
                 fromSide: fromSide || 'right',
                 toSide: toSide || 'left',
                 type: 'material_flow',
-                conveyorCatalogId: conveyorCatalogId || null,
-                conveyorName: cv?.name || null
+                conveyorCatalogId: hasConveyor ? conveyorCatalogId : null,
+                conveyorName: hasConveyor ? (cv?.name || 'Конвейер') : null
             };
-            if (conveyorCatalogId) this.lastConveyorCatalogId = conveyorCatalogId;
+            if (hasConveyor) this.lastConveyorCatalogId = conveyorCatalogId;
             this.connections.push(connection);
             this.drawConnection(connection);
-            this.showNotification(`Связь создана${cv ? ': ' + cv.name : ''}`, 'success');
+            const msg = hasConveyor && cv
+                ? `Связь создана: ${cv.name}`
+                : (hasConveyor ? 'Связь создана' : 'Связь создана (без конвейера)');
+            this.showNotification(msg, 'success');
             return { created: true, id: connectionId };
         };
 
-        if (opts.skipModal && opts.conveyorCatalogId != null) {
+        if (opts.skipModal && ('conveyorCatalogId' in opts)) {
             return Promise.resolve(finish(opts.conveyorCatalogId));
         }
 

@@ -4,10 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Онлайн-сборщик производственного цеха</title>
-    <link rel="stylesheet" href="css/style.css?v=20260528-6">
-    <link rel="stylesheet" href="css/theme.css?v=20260528-6">
-    <link rel="stylesheet" href="css/connections.css?v=20260528-6">
-    <link rel="stylesheet" href="css/embed.css?v=20260528-6">
+    <link rel="stylesheet" href="css/style.css?v=20260528-help-split">
+    <link rel="stylesheet" href="css/theme.css?v=20260528-help-split">
+    <link rel="stylesheet" href="css/connections.css?v=20260528-help-split">
+    <link rel="stylesheet" href="css/embed.css?v=20260528-help-split">
     <!-- Локальный file:// режим: используем CDN, чтобы избежать CORS на wasm -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -32,6 +32,7 @@
                     <div class="catalog-tabs" role="tablist">
                         <button type="button" class="catalog-tab active" data-tab="all"><span class="tab-label-full">Всё</span></button>
                         <button type="button" class="catalog-tab" data-tab="machine"><span class="tab-label-full">Станки</span></button>
+                        <button type="button" class="catalog-tab" data-tab="log_feed"><span class="tab-label-full">Подача бревна</span></button>
                         <button type="button" class="catalog-tab" data-tab="conveyor"><span class="tab-label-full">Конвейеры</span></button>
                         <button type="button" class="catalog-tab" data-tab="complex"><span class="tab-label-full">Комплексы</span></button>
                     </div>
@@ -61,23 +62,12 @@
                 </div>
                 
                 <div class="workspace-top-controls">
-                    <div id="projectTitleWrap" class="project-title-wrap" hidden>
-                        <input type="text" id="projectTitleInput" placeholder="Название проекта" maxlength="120" title="Название для личного кабинета">
+                    <div id="projectTitleWrap" class="project-title-wrap">
+                        <input type="text" id="projectTitleInput" placeholder="Название линии" maxlength="120" title="Название сохранённой конфигурации">
                     </div>
                     <button id="catalogToggleBtn" class="btn btn-outline btn-sm" title="Показать/скрыть каталог оборудования"><i class="fas fa-tools"></i><span class="btn-label"> Каталог</span></button>
                     <button id="clearWorkspaceBtn" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i><span class="btn-label"> Очистить</span></button>
-                    <button id="saveProjectBtn" class="btn btn-outline btn-sm" title="Сохранить черновик в браузере"><i class="fas fa-save"></i><span class="btn-label"> Сохранить</span></button>
-                    <div class="top-actions-menu" id="projectMenuWrap">
-                        <button id="projectMenuBtn" class="btn btn-outline btn-sm" title="Действия с проектом">
-                            <i class="fas fa-folder"></i><span class="btn-label"> Проект</span>
-                        </button>
-                        <div class="top-actions-menu__list" id="projectMenuList">
-                            <button id="loadProjectBtn" class="btn btn-outline btn-sm" title="Загрузить черновик из браузера"><i class="fas fa-folder-open"></i><span class="btn-label"> Загрузить</span></button>
-                            <button id="exportProjectBtn" class="btn btn-outline btn-sm" title="Скачать проект в JSON"><i class="fas fa-file-export"></i><span class="btn-label"> Экспорт</span></button>
-                            <button id="importProjectBtn" class="btn btn-outline btn-sm" title="Загрузить проект из JSON"><i class="fas fa-file-import"></i><span class="btn-label"> Импорт</span></button>
-                        </div>
-                    </div>
-                    <input id="importProjectFileInput" type="file" accept="application/json,.json" style="display:none" />
+                    <button id="saveProjectBtn" class="btn btn-outline btn-sm" title="Сохранить линию в личный кабинет"><i class="fas fa-save"></i><span class="btn-label"> Сохранить</span></button>
                     <button id="connectModeBtn" class="btn btn-outline btn-sm" title="Режим связывания станков"><i class="fas fa-link"></i><span class="btn-label"> Связать</span></button>
                     <button id="howToUseBtn" class="btn btn-outline btn-sm" title="Инструкция по использованию"><i class="fas fa-circle-info"></i><span class="btn-label"> Как пользоваться</span></button>
                     <div id="gridCellSizeDisplay" class="grid-cell-size-display" title="Текущий шаг сетки">Клетка: 20 см</div>
@@ -98,6 +88,26 @@
                     <div class="instruction-content" id="instructionContent"></div>
                 </div>
             </main>
+        </div>
+    </div>
+
+    <div id="saveProjectModal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 440px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-save"></i> Сохранить конфигурацию</h3>
+                <span class="close" id="saveProjectModalClose">&times;</span>
+            </div>
+            <div class="modal-body">
+                <p style="margin: 0 0 12px; color: #555; font-size: 0.9rem;">
+                    Укажите название — его увидите вы и менеджеры в личном кабинете.
+                </p>
+                <label for="saveProjectModalInput" style="display:block; font-weight:600; margin-bottom:6px;">Название</label>
+                <input type="text" id="saveProjectModalInput" class="search-input" maxlength="120" placeholder="Например: Линия СБЦ + Акула" style="width:100%; box-sizing:border-box;">
+            </div>
+            <div class="modal-footer" style="display:flex; gap:8px; justify-content:flex-end;">
+                <button type="button" class="btn btn-secondary" id="saveProjectModalCancel">Отмена</button>
+                <button type="button" class="btn btn-primary" id="saveProjectModalConfirm">Сохранить</button>
+            </div>
         </div>
     </div>
 
@@ -149,7 +159,7 @@
                 <span class="close" id="conveyorPickerClose">&times;</span>
             </div>
             <div class="modal-body">
-                <p style="margin-bottom: 1rem; color: #666;">Выберите транспортёр для участка между станками:</p>
+                <p style="margin-bottom: 1rem; color: #666;">Выберите транспортёр между станками или «Без конвейера», если транспорт не нужен:</p>
                 <div id="conveyorPickerList" class="conveyor-picker-list"></div>
             </div>
             <div class="modal-footer">
@@ -171,86 +181,125 @@
         </div>
     </div>
 
-    <template id="howToUseTemplate">
+    <template id="howToUseTemplateUser">
         <div class="how-to-use-content">
-            <p class="how-to-use-lead">Конструктор компоновки цеха: размещайте станки, связывайте их конвейерами и получайте расчёт линии.</p>
+            <p class="how-to-use-lead">Конфигуратор производственной линии: формирование схемы размещения оборудования, технологических связей и получение расчётных показателей.</p>
 
-            <h4 class="how-to-use-heading">Кнопки верхней панели</h4>
+            <h4 class="how-to-use-heading">Панель управления</h4>
             <table class="btn-help-table">
                 <thead>
-                    <tr><th>Кнопка</th><th>Что делает</th></tr>
+                    <tr><th>Элемент</th><th>Назначение</th></tr>
                 </thead>
                 <tbody>
-                    <tr><td><strong>Каталог</strong></td><td>Показывает или скрывает боковую панель с оборудованием.</td></tr>
-                    <tr><td><strong>Очистить</strong></td><td>Удаляет все станки и связи с рабочей области (с подтверждением).</td></tr>
-                    <tr><td><strong>Сохранить</strong></td><td>Сохраняет текущий проект как черновик в браузере (localStorage).</td></tr>
-                    <tr><td><strong>Проект</strong></td><td>Открывает меню действий с файлом проекта.</td></tr>
-                    <tr><td>↳ <strong>Загрузить</strong></td><td>Загружает последний сохранённый черновик из браузера.</td></tr>
-                    <tr><td>↳ <strong>Экспорт</strong></td><td>Скачивает проект в JSON-файл на компьютер.</td></tr>
-                    <tr><td>↳ <strong>Импорт</strong></td><td>Загружает проект из JSON-файла с диска.</td></tr>
-                    <tr><td><strong>Связать</strong></td><td>Режим создания связей: клик по источнику (откуда), затем по приёмнику (куда). После связи выберите конвейер.</td></tr>
-                    <tr><td><strong>Как пользоваться</strong></td><td>Открывает эту инструкцию.</td></tr>
-                    <tr><td><strong>Клетка</strong></td><td>Показывает текущий шаг сетки. Сетка и выравнивание всегда включены.</td></tr>
-                    <tr><td><strong>− / + / ⊙</strong></td><td>Уменьшить масштаб, увеличить масштаб, сбросить масштаб и центрировать область.</td></tr>
-                    <tr><td><strong>Рассчитать</strong></td><td>Считает производительность, энергию, стоимость и связи. Можно посмотреть отчёт или скачать PDF.</td></tr>
+                    <tr><td><strong>Название линии</strong></td><td>Наименование сохраняемой конфигурации.</td></tr>
+                    <tr><td><strong>Каталог</strong></td><td>Отображение или скрытие списка оборудования.</td></tr>
+                    <tr><td><strong>Очистить</strong></td><td>Удаление всех объектов с рабочей области (с подтверждением).</td></tr>
+                    <tr><td><strong>Сохранить</strong></td><td>Сохранение схемы в личный кабинет.</td></tr>
+                    <tr><td><strong>Связать</strong></td><td>Режим установки технологической связи между станками.</td></tr>
+                    <tr><td><strong>Рассчитать</strong></td><td>Выполнение расчёта и формирование отчёта (экран / PDF).</td></tr>
                 </tbody>
             </table>
 
-            <h4 class="how-to-use-heading">Каталог оборудования</h4>
+            <h4 class="how-to-use-heading">Каталог</h4>
             <ul>
-                <li>Вкладки: <strong>Все</strong>, <strong>Станки</strong>, <strong>Конвейеры</strong> (справочно), <strong>Комплексы</strong>.</li>
-                <li>Строка поиска фильтрует список по названию.</li>
-                <li>Перетащите карточку станка или комплекса на рабочую область.</li>
-                <li>Конвейер отдельно на поле не ставится — он выбирается при создании связи.</li>
+                <li><strong>Станки</strong> — размещаются на рабочей области перетаскиванием.</li>
+                <li><strong>Подача бревна</strong> — оборудование загрузочного участка (при необходимости).</li>
+                <li><strong>Конвейеры</strong> — назначаются при создании связи, отдельно на поле не размещаются.</li>
+                <li><strong>Комплексы</strong> — типовые линии с автоматическим размещением состава.</li>
             </ul>
 
-            <h4 class="how-to-use-heading">Станки на поле</h4>
+            <h4 class="how-to-use-heading">Рабочая область</h4>
             <ul>
-                <li><strong>Перемещение</strong> — перетащите карточку мышью.</li>
-                <li><strong>Удаление</strong> — кнопка <strong>×</strong> в углу карточки.</li>
-                <li>Красные пунктирные линии по краям — граница рабочей области.</li>
+                <li>Перемещение объекта — перетаскивание карточки.</li>
+                <li>Удаление — кнопка <strong>×</strong> на карточке.</li>
+                <li>Красная пунктирная линия обозначает границу области.</li>
             </ul>
 
-            <h4 class="how-to-use-heading">Связи между станками</h4>
+            <h4 class="how-to-use-heading">Связи</h4>
             <ol>
-                <li>Нажмите <strong>«Связать»</strong> (или используйте <kbd>Shift</kbd> + клик по двум станкам).</li>
-                <li>Кликните <strong>источник</strong> — станок, откуда идёт поток (обычно правее).</li>
-                <li>Кликните <strong>приёмник</strong> — станок, куда идёт поток (обычно левее).</li>
-                <li>В окне выберите конвейер (мощность, габариты, скорость, цена).</li>
-                <li>На связи появится оранжевая линия со стрелкой и подписью конвейера.</li>
+                <li>Активируйте <strong>«Связать»</strong> (или <kbd>Shift</kbd> + два последовательных щелчка по станкам).</li>
+                <li>Укажите станок-источник, затем станок-приёмник.</li>
+                <li>Выберите тип конвейера или пункт <strong>«Без конвейера»</strong>.</li>
             </ol>
-            <p>Несколько станков можно подключить к одному приёмнику — создавайте отдельную связь для каждой пары.</p>
-            <p><strong>Редактирование связи:</strong> ПКМ по линии или по овалу с названием конвейера — сменить конвейер или удалить связь.</p>
+            <p>Редактирование связи — контекстное меню (<strong>ПКМ</strong>) по линии связи.</p>
 
-            <h4 class="how-to-use-heading">Комплексы</h4>
-            <ol>
-                <li>Откройте вкладку <strong>«Комплексы»</strong> в каталоге.</li>
-                <li>Перетащите комплекс на рабочую область.</li>
-                <li>Схема развернётся автоматически: станки выстроятся в ряд со связями.</li>
-            </ol>
+            <h4 class="how-to-use-heading">Сохранение</h4>
+            <p>После нажатия <strong>«Сохранить»</strong> конфигурация доступна в личном кабинете в разделе <strong>«Мои конфигурации»</strong>.</p>
+        </div>
+    </template>
 
-            <h4 class="how-to-use-heading">Навигация по рабочей области</h4>
+    <template id="howToUseTemplateStaff">
+        <div class="how-to-use-content">
+            <p class="how-to-use-lead">Конфигуратор производственной линии ООО «ЛЕСКОМ»: проектирование компоновки цеха, технологических связей, сохранение конфигураций клиентов и формирование расчётно-экономических отчётов.</p>
+
+            <h4 class="how-to-use-heading">Панель управления</h4>
+            <table class="btn-help-table">
+                <thead>
+                    <tr><th>Элемент</th><th>Назначение</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td><strong>Название линии</strong></td><td>Наименование конфигурации, отображаемое в личном кабинете и в реестре менеджера.</td></tr>
+                    <tr><td><strong>Каталог</strong></td><td>Отображение или скрытие списка оборудования.</td></tr>
+                    <tr><td><strong>Очистить</strong></td><td>Удаление всех объектов с рабочей области (с подтверждением).</td></tr>
+                    <tr><td><strong>Сохранить</strong></td><td>Сохранение схемы в учётную запись пользователя (личный кабинет / API).</td></tr>
+                    <tr><td><strong>Связать</strong></td><td>Режим установки технологической связи между станками.</td></tr>
+                    <tr><td><strong>Клетка</strong></td><td>Текущий шаг координатной сетки; привязка объектов к сетке активна постоянно.</td></tr>
+                    <tr><td><strong>− / + / ⊙</strong></td><td>Изменение масштаба и центрирование рабочей области.</td></tr>
+                    <tr><td><strong>Рассчитать</strong></td><td>Расчёт производительности линии, энергопотребления, стоимости; просмотр результатов и выгрузка PDF.</td></tr>
+                </tbody>
+            </table>
+
+            <h4 class="how-to-use-heading">Классификация оборудования в каталоге</h4>
             <ul>
-                <li><kbd>Ctrl</kbd> + <kbd>колесо мыши</kbd> — приближение и отдаление.</li>
-                <li><kbd>Alt</kbd> + ЛКМ, средняя кнопка мыши или ПКМ + перетаскивание — перемещение по полю.</li>
-                <li>ЛКМ по пустому месту на поле + перетаскивание — тоже перемещение.</li>
-                <li>Кнопки <strong>−</strong> и <strong>+</strong> — масштаб; кнопка с прицелом — центрирование.</li>
+                <li><strong>Станки</strong> — основное технологическое оборудование линии.</li>
+                <li><strong>Подача бревна</strong> — накопители, кантователи, бревнотаски, устройства поштучной выдачи, центрователи (размещаются на схеме до линии станков).</li>
+                <li><strong>Конвейеры</strong> — рольганги, транспортеры; указываются при создании связи между станками, на поле отдельно не размещаются.</li>
+                <li><strong>Комплексы</strong> — типовые лесопильные линии с автоматическим развёртыванием состава и связей.</li>
             </ul>
 
-            <h4 class="how-to-use-heading">Расчёт и отчёт</h4>
+            <h4 class="how-to-use-heading">Рабочая область</h4>
             <ul>
-                <li>После нажатия <strong>«Рассчитать»</strong> можно <strong>посмотреть</strong> результаты на экране или <strong>скачать PDF</strong>.</li>
-                <li>В расчёте учитываются станки, связи, конвейеры и узкое место линии.</li>
+                <li>Перемещение — перетаскивание карточки оборудования.</li>
+                <li>Удаление — элемент <strong>×</strong> на карточке.</li>
+                <li>Граница области обозначена красной пунктирной линией.</li>
+            </ul>
+
+            <h4 class="how-to-use-heading">Технологические связи</h4>
+            <ol>
+                <li>Активируется режим <strong>«Связать»</strong> или используется сочетание <kbd>Shift</kbd> и два щелчка по станкам.</li>
+                <li>Указываются станок-источник и станок-приёмник потока материала.</li>
+                <li>В диалоге выбирается конвейер из каталога либо вариант <strong>«Без конвейера»</strong> (связь без учёта транспортёра в стоимости).</li>
+            </ol>
+            <p>Для каждой пары станков формируется отдельная связь. Изменение параметров связи — через контекстное меню (<strong>ПКМ</strong>) по линии. При повторном открытии сохранённой конфигурации связи восстанавливаются в том числе без назначенного конвейера.</p>
+
+            <h4 class="how-to-use-heading">Расчёт и отчётность</h4>
+            <ul>
+                <li>Производительность линии определяется по цепочке связей (минимальное звено), а не как сумма производительностей станков.</li>
+                <li>Фиксируется узкое место — станок с минимальной производительностью в цепочке.</li>
+                <li>Отчёт содержит: станки (с итоговой стоимостью), подачу бревна (при наличии на схеме), конвейеры на связях, баланс сырья и продукции; PDF формируется компактно (один лист при достаточном объёме данных).</li>
+                <li>Позиции с ценой «по запросу» в суммарные показатели не включаются и выделяются в отчёте отдельно.</li>
+            </ul>
+
+            <h4 class="how-to-use-heading">Сохранение конфигураций</h4>
+            <ul>
+                <li>Клиент: кнопка <strong>«Сохранить»</strong>, раздел <strong>«Мои конфигурации»</strong> личного кабинета.</li>
+            </ul>
+
+            <h4 class="how-to-use-heading">Просмотр конфигураций клиентов (менеджер)</h4>
+            <ul>
+                <li>Раздел <strong>«Конфигурации клиентов»</strong> в личном кабинете (доступ при наличии соответствующих прав).</li>
+                <li>Открытие схемы — кнопка <strong>«Открыть схему»</strong> в строке конфигурации; просмотр выполняется в текущей вкладке браузера.</li>
+                <li>Доступен просмотр метаданных конфигурации в формате JSON.</li>
             </ul>
         </div>
     </template>
 
-    <script src="js/equipment-data.js?v=20260528-6"></script>
-    <script src="js/catalog-meta.js?v=20260528-6"></script>
-    <script src="js/connections.js?v=20260528-6"></script>
-    <script src="js/integration.js?v=20260528-6"></script>
-    <script src="js/main.js?v=20260528-6"></script>
-    <script src="js/factory-extensions.js?v=20260528-6"></script>
+    <script src="js/equipment-data.js?v=20260528-help-split"></script>
+    <script src="js/catalog-meta.js?v=20260528-help-split"></script>
+    <script src="js/connections.js?v=20260528-help-split"></script>
+    <script src="js/integration.js?v=20260528-help-split"></script>
+    <script src="js/main.js?v=20260528-help-split"></script>
+    <script src="js/factory-extensions.js?v=20260528-help-split"></script>
 </body>
 </html>
 

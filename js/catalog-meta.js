@@ -5,7 +5,17 @@
 (function (global) {
     'use strict';
 
+    /** Транспорт между станками (рольганги, транспортеры на связях) */
     const CONVEYOR_IDS = new Set([45, 48, 49, 50, 51]);
+    /** Подача/накопление бревна до линии (не межстаночный конвейер) */
+    const LOG_FEED_IDS = new Set([43, 44, 46, 52]);
+
+    const CONVEYOR_NAME_RE = /конвей|рольган|скребк|транспортер|транспортёр|ленточн\w*\s+транспорт|поперечн\w*\s+транспорт|углов\w*\s+транспорт|цепн\w*\s+транспорт|открытый\s+транспорт/i;
+    const CONVEYOR_SLUG_RE = /rolgang|rolgangi|skrebkov|lentochnyy-transporter|poperechn|uglovoy-transport|otkrytyy-transport/i;
+
+    const LOG_FEED_NAME_RE = /бревнотас|кантоват|накопитель|центроват|перегруж|поштучн\w*\s+выдач|устройство\s+для\s+поштучн|вращател\s+бревн/i;
+    const LOG_FEED_SLUG_RE = /brevnotaska|kantovatel|nakopitel|tsentrovat|poshtuchn|peregruzh|vrashchatel/i;
+
     const COMPLEX_IDS = new Set([31, 32, 33, 34, 35, 36]);
     const DEFAULT_CONVEYOR_ID = 48;
 
@@ -116,8 +126,6 @@
         }
     };
 
-    const BY_ID = {};
-
     function inferMaterialTypes(eq) {
         const cat = eq.category || '';
         if (CATEGORY_TYPES[cat]) return CATEGORY_TYPES[cat];
@@ -125,26 +133,64 @@
         for (const h of NAME_HINTS) {
             if (h.re.test(name)) return { in: h.in, out: h.out };
         }
-        if (/транспорт|рольган|скребк/i.test(name)) return { in: 'pilomaterial', out: 'pilomaterial' };
+        if (isLogFeedLike(eq)) return { in: 'brevno', out: 'brevno' };
+        if (isConveyorLike(eq)) return { in: 'pilomaterial', out: 'pilomaterial' };
         return { in: 'pilomaterial', out: 'pilomaterial' };
     }
 
+    function isLogFeedLike(eq) {
+        if (!eq) return false;
+        const id = Number(eq.id);
+        if (Number.isFinite(id) && LOG_FEED_IDS.has(id)) return true;
+
+        const name = (eq.name || '').toLowerCase();
+        const cat = (eq.category || '').toLowerCase();
+        const type = (eq.equipment_type || '').toLowerCase();
+        const slug = String(eq.leskomSlug || eq.url || eq.folder_path || '').toLowerCase();
+        const blob = `${name} ${cat} ${type}`;
+
+        if (/отделитель/i.test(blob)) return false;
+        if (LOG_FEED_NAME_RE.test(blob)) return true;
+        if (LOG_FEED_SLUG_RE.test(slug)) return true;
+        return false;
+    }
+
+    function isConveyorLike(eq) {
+        if (!eq) return false;
+        if (isLogFeedLike(eq)) return false;
+
+        const id = Number(eq.id);
+        if (Number.isFinite(id) && CONVEYOR_IDS.has(id)) return true;
+
+        const name = (eq.name || '').toLowerCase();
+        const cat = (eq.category || '').toLowerCase();
+        const type = (eq.equipment_type || '').toLowerCase();
+        const slug = String(eq.leskomSlug || eq.url || eq.folder_path || '').toLowerCase();
+        const blob = `${name} ${cat} ${type}`;
+
+        if (/отделитель/i.test(blob)) return false;
+        if (CONVEYOR_NAME_RE.test(blob)) return true;
+        if (CONVEYOR_SLUG_RE.test(slug)) return true;
+        return false;
+    }
+
     function resolveCatalogType(eq) {
-        if (CONVEYOR_IDS.has(eq.id)) return 'conveyor';
+        if (isLogFeedLike(eq)) return 'log_feed';
+        if (isConveyorLike(eq)) return 'conveyor';
         if (COMPLEX_IDS.has(eq.id)) return 'equipment_complex';
         const cat = (eq.category || '').toLowerCase();
         const name = (eq.name || '').toLowerCase();
         if (cat.includes('лесопильн') && (name.includes('линия') || name.includes('комплекс'))) {
             return 'equipment_complex';
         }
-        if (/транспорт|рольган|скребк|конвей/i.test(name)) return 'conveyor';
+        if (eq.catalogType === 'equipment_complex') return 'equipment_complex';
         return 'machine';
     }
 
     function enrichEquipment(eq) {
         const item = { ...eq };
         if (!item.efficiency) item.efficiency = 0.85;
-        item.catalogType = item.catalogType || resolveCatalogType(item);
+        item.catalogType = resolveCatalogType(item);
         const types = inferMaterialTypes(item);
         item.input_type = item.input_type || types.in;
         item.output_type = item.output_type || types.out;
@@ -201,7 +247,7 @@
 
     global.CatalogMeta = {
         CONVEYOR_IDS,
-        COMPLEX_IDS,
+        LOG_FEED_IDS,
         DEFAULT_CONVEYOR_ID,
         MATERIAL_LABELS,
         COMPLEX_TEMPLATES,
@@ -211,6 +257,9 @@
         getComplexSummary,
         materialLabel,
         areTypesCompatible,
-        isConveyor: (eq) => eq && eq.catalogType === 'conveyor'
+        isLogFeedLike,
+        isConveyorLike,
+        isConveyor: (eq) => eq && eq.catalogType === 'conveyor',
+        isLogFeed: (eq) => eq && eq.catalogType === 'log_feed'
     };
 })(typeof window !== 'undefined' ? window : globalThis);
