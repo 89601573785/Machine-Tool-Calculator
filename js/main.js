@@ -9,9 +9,8 @@ class FactoryDesigner {
         this.zoom = 1.0;
         this.panX = 0;
         this.panY = 0;
-        this.snapEnabled = false;
         this.snapSize = 20;
-        this.alignSnapThreshold = 8;
+        this.cmToPx = 0.8;
         this.isPanning = false;
         this.lastPanX = 0;
         this.lastPanY = 0;
@@ -101,18 +100,11 @@ class FactoryDesigner {
     }
 
     updateWorkspaceBySidebar() {
-        const sidebar = document.getElementById('equipmentSidebar');
         const workspace = document.querySelector('.workspace');
-        if (!sidebar || !workspace) return;
-
-        const isCollapsed = sidebar.classList.contains('collapsed');
-        if (isCollapsed) {
-            workspace.style.left = '0';
-            workspace.style.width = '100%';
-        } else {
-            workspace.style.left = '320px';
-            workspace.style.width = 'calc(100% - 320px)';
-        }
+        if (!workspace) return;
+        // Sidebar работает как overlay, поэтому рабочую область не сдвигаем.
+        workspace.style.left = '0';
+        workspace.style.width = '100%';
     }
 
     async init() {
@@ -232,6 +224,7 @@ class FactoryDesigner {
                 return;
             }
             
+            data = this.normalizeEquipmentDimensions(data);
             if (window.CatalogMeta) {
                 data = CatalogMeta.enrichAll(data);
             }
@@ -263,6 +256,55 @@ class FactoryDesigner {
                 `;
             }
         }
+    }
+
+    parseDimensionMeters(value) {
+        if (value === null || value === undefined) return null;
+        if (typeof value === 'number') {
+            return Number.isFinite(value) && value > 0 ? value : null;
+        }
+        if (typeof value !== 'string') return null;
+        const normalized = value
+            .replace(',', '.')
+            .replace(/[^\d.]/g, '')
+            .trim();
+        if (!normalized) return null;
+        const n = Number(normalized);
+        return Number.isFinite(n) && n > 0 ? n : null;
+    }
+
+    formatDimensionValue(value) {
+        const meters = this.parseDimensionMeters(value);
+        if (!Number.isFinite(meters)) return '—';
+        return Number(meters.toFixed(3)).toString();
+    }
+
+    formatPowerValue(value) {
+        if (value === null || value === undefined) return '—';
+        if (typeof value === 'string') {
+            const normalized = value.trim().toLowerCase();
+            if (!normalized || normalized === 'null' || normalized === 'undefined' || normalized === 'nan') {
+                return '—';
+            }
+        }
+        const num = Number(value);
+        if (!Number.isFinite(num) || num <= 0) return '—';
+        return Number(num.toFixed(3)).toString();
+    }
+
+    normalizeEquipmentDimensions(list) {
+        if (!Array.isArray(list)) return [];
+        return list.map((item) => {
+            const width = this.parseDimensionMeters(item?.width);
+            const length = this.parseDimensionMeters(item?.length);
+            const height = this.parseDimensionMeters(item?.height);
+            return {
+                ...item,
+                width: width ?? null,
+                length: length ?? null,
+                height: height ?? null
+            };
+        });
     }
     
     async loadFromSQLite() {
@@ -509,11 +551,13 @@ class FactoryDesigner {
                 }
                 
                 // Форматируем данные с проверкой на наличие
-                const powerConsumption = (equipment.power_consumption !== null && equipment.power_consumption !== undefined && equipment.power_consumption !== 0)
-                    ? `${equipment.power_consumption} кВт`
-                    : null;
-                const dimensions = (equipment.width && equipment.length && equipment.height)
-                    ? `${equipment.width}×${equipment.length}×${equipment.height} м`
+                const powerValue = this.formatPowerValue(equipment.power_consumption);
+                const powerConsumption = powerValue !== '—' ? `${powerValue} кВт` : null;
+                const w = this.formatDimensionValue(equipment.width);
+                const l = this.formatDimensionValue(equipment.length);
+                const h = this.formatDimensionValue(equipment.height);
+                const dimensions = (w !== '—' && l !== '—' && h !== '—')
+                    ? `${w}×${l}×${h} м`
                     : null;
                 
                 // Формируем HTML карточки
@@ -611,22 +655,27 @@ class FactoryDesigner {
 
     setupEventListeners() {
         this.isConnectMode = false;
-        document.getElementById('calculateBtn').addEventListener('click', () => this.calculateProduction());
-        document.getElementById('clearWorkspaceBtn').addEventListener('click', () => this.clearWorkspace(true));
-        document.getElementById('gridToggleBtn').addEventListener('click', () => this.toggleGrid());
-        const snapToggleBtn = document.getElementById('snapToggleBtn');
-        if (snapToggleBtn) {
-            snapToggleBtn.addEventListener('click', () => this.toggleSnap());
-        }
-        document.getElementById('zoomInBtn').addEventListener('click', () => {
+        const bindClick = (id, handler) => {
+            const el = document.getElementById(id);
+            if (!el) {
+                console.warn(`Кнопка не найдена: #${id}`);
+                return null;
+            }
+            el.addEventListener('click', handler);
+            return el;
+        };
+
+        bindClick('calculateBtn', () => this.calculateProduction());
+        bindClick('clearWorkspaceBtn', () => this.clearWorkspace(true));
+        bindClick('zoomInBtn', () => {
             const pivot = this.getZoomPivot();
             this.setZoom(this.zoom * 1.2, pivot.x, pivot.y);
         });
-        document.getElementById('zoomOutBtn').addEventListener('click', () => {
+        bindClick('zoomOutBtn', () => {
             const pivot = this.getZoomPivot();
             this.setZoom(this.zoom * 0.8, pivot.x, pivot.y);
         });
-        document.getElementById('zoomResetBtn').addEventListener('click', () => {
+        bindClick('zoomResetBtn', () => {
             this.setZoom(1.0);
             this.centerWorkspace();
         });
@@ -702,17 +751,22 @@ class FactoryDesigner {
                 this.showNotification(this.isConnectMode ? 'Режим связывания включён' : 'Режим связывания выключен', 'info');
             });
         }
-        document.getElementById('catalogToggleBtn').addEventListener('click', () => {
+        bindClick('catalogToggleBtn', () => {
             const sidebar = document.getElementById('equipmentSidebar');
+            if (!sidebar) return;
             sidebar.classList.toggle('collapsed');
             this.updateWorkspaceBySidebar();
         });
-        document.getElementById('sidebarToggleBtn').addEventListener('click', (e) => {
+        const sidebarToggleBtn = document.getElementById('sidebarToggleBtn');
+        if (sidebarToggleBtn) {
+            sidebarToggleBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             const sidebar = document.getElementById('equipmentSidebar');
+            if (!sidebar) return;
             sidebar.classList.toggle('collapsed');
             this.updateWorkspaceBySidebar();
         });
+        }
         const searchInput = document.getElementById('equipmentSearch');
         if (searchInput) {
             searchInput.addEventListener('input', (e) => this.filterEquipment(e.target.value));
@@ -759,7 +813,11 @@ class FactoryDesigner {
             
             workspaceArea.addEventListener('mousedown', (e) => {
                 // Правая/средняя кнопка, Alt+ЛКМ или ЛКМ по пустому месту рабочей области
-                const onEmptyArea = e.button === 0 && e.target === workspaceArea;
+                const onEmptyArea = e.button === 0 && (
+                    e.target === workspaceArea ||
+                    e.target.id === 'gridOverlay' ||
+                    e.target.classList?.contains('grid-overlay')
+                );
                 if (e.button === 2 || e.button === 1 || (e.button === 0 && e.altKey) || onEmptyArea) {
                     e.preventDefault();
                     this.isPanning = true;
@@ -829,17 +887,36 @@ class FactoryDesigner {
         }
     }
 
-    toggleSnap() {
-        this.snapEnabled = !this.snapEnabled;
-        const btn = document.getElementById('snapToggleBtn');
-        if (btn) btn.classList.toggle('active', this.snapEnabled);
-        this.showNotification(this.snapEnabled ? 'Привязка к сетке включена' : 'Привязка к сетке выключена', 'info');
+    getGridStepCm() {
+        if (this.zoom >= 2.2) return 10;
+        if (this.zoom >= 1.6) return 20;
+        if (this.zoom >= 1.1) return 50;
+        if (this.zoom >= 0.8) return 100;
+        if (this.zoom >= 0.6) return 200;
+        return 200;
+    }
+
+    formatGridStepLabel(stepCm) {
+        if (stepCm > 60) {
+            const meters = stepCm / 100;
+            const text = Number.isInteger(meters) ? `${meters}` : meters.toFixed(1).replace('.', ',');
+            return `${text} м`;
+        }
+        return `${stepCm} см`;
+    }
+
+    updateGridCellSizeDisplay(stepCm) {
+        const display = document.getElementById('gridCellSizeDisplay');
+        if (!display) return;
+        display.textContent = `Клетка: ${this.formatGridStepLabel(stepCm)}`;
     }
 
     getGridSizes() {
-        const major = this.zoom < 0.9 ? 120 : (this.zoom < 1.5 ? 80 : 50);
-        const minor = this.zoom < 0.9 ? 40 : (this.zoom < 1.5 ? 30 : 20);
-        return { major, minor };
+        const minorCm = this.getGridStepCm();
+        const majorCm = minorCm * 5;
+        const minor = Math.max(8, Math.round(minorCm * this.cmToPx));
+        const major = Math.max(minor, Math.round(majorCm * this.cmToPx));
+        return { major, minor, minorCm, majorCm };
     }
 
     getSnapSize() {
@@ -856,119 +933,9 @@ class FactoryDesigner {
     }
 
     applySnap(x, y) {
-        if (!this.snapEnabled) return { x, y };
         return { x: this.snapValue(x), y: this.snapValue(y) };
     }
     
-    applyAlignmentSnap(x, y, element) {
-        if (!this.snapEnabled) return { x, y };
-        if (!element) return { x, y };
-        
-        const ws = document.getElementById('workspaceArea');
-        if (!ws) return { x, y };
-        
-        const threshold = this.alignSnapThreshold ?? 8;
-        const w = element.offsetWidth || 200;
-        const h = element.offsetHeight || 200;
-        
-        // Собираем кандидатов по другим элементам (лево/центр/право и верх/середина/низ)
-        const others = Array.from(ws.querySelectorAll('.placed-equipment')).filter(el => el !== element);
-        if (others.length === 0) return { x, y };
-        
-        const xCandidates = [];
-        const yCandidates = [];
-        
-        others.forEach(el => {
-            const left = el.offsetLeft;
-            const top = el.offsetTop;
-            const ew = el.offsetWidth || 200;
-            const eh = el.offsetHeight || 200;
-            
-            // X
-            xCandidates.push({ pos: left, line: left }); // left-left
-            xCandidates.push({ pos: left + ew / 2 - w / 2, line: left + ew / 2 }); // center-center
-            xCandidates.push({ pos: left + ew - w, line: left + ew }); // right-right
-            
-            // Y
-            yCandidates.push({ pos: top, line: top }); // top-top
-            yCandidates.push({ pos: top + eh / 2 - h / 2, line: top + eh / 2 }); // middle-middle
-            yCandidates.push({ pos: top + eh - h, line: top + eh }); // bottom-bottom
-        });
-        
-        const findClosest = (value, candidates) => {
-            let best = null;
-            let bestDiff = Infinity;
-            for (const c of candidates) {
-                const diff = Math.abs(value - c.pos);
-                if (diff < bestDiff) {
-                    bestDiff = diff;
-                    best = c;
-                }
-            }
-            if (best !== null && bestDiff <= threshold) return best;
-            return null;
-        };
-        
-        const bestX = findClosest(x, xCandidates);
-        const bestY = findClosest(y, yCandidates);
-        
-        return {
-            x: bestX ? bestX.pos : x,
-            y: bestY ? bestY.pos : y,
-            guideX: bestX ? bestX.line : null,
-            guideY: bestY ? bestY.line : null
-        };
-    }
-
-    ensureAlignmentGuides() {
-        const ws = document.getElementById('workspaceArea');
-        if (!ws) return null;
-        let container = ws.querySelector('.alignment-guides');
-        if (container) return container;
-        
-        container = document.createElement('div');
-        container.className = 'alignment-guides';
-        
-        const v = document.createElement('div');
-        v.className = 'alignment-guide vertical';
-        v.style.display = 'none';
-        
-        const h = document.createElement('div');
-        h.className = 'alignment-guide horizontal';
-        h.style.display = 'none';
-        
-        container.appendChild(v);
-        container.appendChild(h);
-        ws.appendChild(container);
-        return container;
-    }
-
-    setAlignmentGuides(guideX, guideY) {
-        const container = this.ensureAlignmentGuides();
-        if (!container) return;
-        const v = container.querySelector('.alignment-guide.vertical');
-        const h = container.querySelector('.alignment-guide.horizontal');
-        if (!v || !h) return;
-        
-        if (typeof guideX === 'number' && Number.isFinite(guideX)) {
-            v.style.left = `${guideX}px`;
-            v.style.display = 'block';
-        } else {
-            v.style.display = 'none';
-        }
-        
-        if (typeof guideY === 'number' && Number.isFinite(guideY)) {
-            h.style.top = `${guideY}px`;
-            h.style.display = 'block';
-        } else {
-            h.style.display = 'none';
-        }
-    }
-
-    hideAlignmentGuides() {
-        this.setAlignmentGuides(null, null);
-    }
-
     setupDragAndDrop() {
         const workspace = document.getElementById('workspaceArea');
         if (!workspace) {
@@ -1005,11 +972,9 @@ class FactoryDesigner {
                     // Поэтому нужно просто вычесть позицию элемента и разделить на масштаб
                     let x = (e.clientX - rect.left) / this.zoom;
                     let y = (e.clientY - rect.top) / this.zoom;
-                    if (this.snapEnabled && !e.ctrlKey) {
-                        const snapped = this.applySnap(x, y);
-                        x = snapped.x;
-                        y = snapped.y;
-                    }
+                    const snapped = this.applySnap(x, y);
+                    x = snapped.x;
+                    y = snapped.y;
                     if (typeof this.handleEquipmentDrop === 'function') {
                         this.handleEquipmentDrop(equipment, x, y);
                     } else {
@@ -1044,21 +1009,23 @@ class FactoryDesigner {
         const div = document.createElement('div');
         div.className = 'placed-equipment';
         const edgePadding = this.getEdgePadding();
-        const cardW = 260;
-        const cardH = 260;
+        const dimensions = this.getEquipmentCardSize(equipment);
+        const cardW = dimensions.widthPx;
+        const cardH = dimensions.lengthPx;
+        const cardArea = cardW * cardH;
         const maxX = Math.max(edgePadding, this.workspaceWidth - cardW - edgePadding);
         const maxY = Math.max(edgePadding, this.workspaceHeight - cardH - edgePadding);
         let safeX = x;
         let safeY = y;
-        if (this.snapEnabled) {
-            const snapped = this.applySnap(x, y);
-            safeX = snapped.x;
-            safeY = snapped.y;
-        }
+        const snapped = this.applySnap(x, y);
+        safeX = snapped.x;
+        safeY = snapped.y;
         safeX = Math.min(maxX, Math.max(edgePadding, safeX));
         safeY = Math.min(maxY, Math.max(edgePadding, safeY));
         div.style.left = `${safeX}px`;
         div.style.top = `${safeY}px`;
+        div.style.width = `${cardW}px`;
+        div.style.minHeight = `${cardH}px`;
         // Уникальный ID экземпляра на поле (важно: один и тот же станок можно разместить несколько раз)
         const placementId = placementIdOverride !== null ? placementIdOverride : this.nextPlacementId++;
         div.dataset.placementId = placementId;
@@ -1072,8 +1039,16 @@ class FactoryDesigner {
         
         // Добавляем миниатюру картинки
         let imageHTML = '';
+        let visualMode = 'normal';
+        if (equipment.photo && (cardW >= 520 || cardH >= 520 || cardArea >= 240000)) {
+            visualMode = 'image-only';
+        } else if (cardW >= 360 || cardH >= 300 || cardArea >= 120000) {
+            visualMode = 'large';
+        }
+        if (visualMode === 'large') div.classList.add('placed-equipment--large');
+        if (visualMode === 'image-only') div.classList.add('placed-equipment--image-only');
         if (equipment.photo) {
-            imageHTML = `<img src="${equipment.photo}" alt="${equipment.name}" style="width: 100%; height: 120px; object-fit: cover; border-radius: 6px; margin-bottom: 8px;" onerror="this.style.display='none'">`;
+            imageHTML = `<img class="placed-equipment-image" src="${equipment.photo}" alt="${equipment.name}" onerror="this.style.display='none'">`;
         }
         
         // Форматируем цену
@@ -1094,8 +1069,8 @@ class FactoryDesigner {
             <h4>${equipment.name}</h4>
             <div class="equipment-stats">
                 <p><i class="fas fa-tachometer-alt"></i> ${calculatedProductivity} м³/смену</p>
-                <p><i class="fas fa-bolt"></i> ${equipment.power_consumption} кВт</p>
-                <p><i class="fas fa-ruler"></i> ${equipment.width}×${equipment.length}×${equipment.height} м</p>
+                <p><i class="fas fa-bolt"></i> ${this.formatPowerValue(equipment.power_consumption)} кВт</p>
+                <p><i class="fas fa-ruler"></i> ${this.formatDimensionValue(equipment.width)}×${this.formatDimensionValue(equipment.length)}×${this.formatDimensionValue(equipment.height)} м</p>
                 <p><i class="fas fa-ruble-sign"></i> ${priceDisplay}</p>
             </div>
         `;
@@ -1143,17 +1118,9 @@ class FactoryDesigner {
             const maxY = Math.max(edgePadding, maxYRaw);
             let newX = cursorX - startX;
             let newY = cursorY - startY;
-            if (this.snapEnabled && !e.ctrlKey) {
-                const snapped = this.applySnap(newX, newY);
-                newX = snapped.x;
-                newY = snapped.y;
-                const aligned = this.applyAlignmentSnap(newX, newY, element);
-                newX = aligned.x;
-                newY = aligned.y;
-                this.setAlignmentGuides(aligned.guideX, aligned.guideY);
-            } else {
-                this.hideAlignmentGuides();
-            }
+            const snapped = this.applySnap(newX, newY);
+            newX = snapped.x;
+            newY = snapped.y;
             newX = Math.max(edgePadding, Math.min(maxX, newX));
             newY = Math.max(edgePadding, Math.min(maxY, newY));
             element.style.left = `${newX}px`;
@@ -1179,7 +1146,6 @@ class FactoryDesigner {
             if (isDragging) {
                 isDragging = false;
                 element.classList.remove('dragging');
-                this.hideAlignmentGuides();
             }
         };
         
@@ -1377,28 +1343,53 @@ class FactoryDesigner {
         reader.readAsText(file);
     }
 
-    toggleGrid() {
-        document.getElementById('gridOverlay').classList.toggle('active');
-        this.updateGridByZoom();
-    }
-
     updateGridByZoom() {
         const workspace = document.getElementById('workspaceArea');
         const grid = document.getElementById('gridOverlay');
-        const { major, minor } = this.getGridSizes();
+        const { major, minor, minorCm } = this.getGridSizes();
         this.snapSize = minor;
+        this.updateGridCellSizeDisplay(minorCm);
+        const linePx = this.zoom <= 0.6 ? 3 : 1;
+        const majorAlpha = this.zoom <= 0.6 ? 0.35 : 0.22;
+        const minorAlpha = this.zoom <= 0.6 ? 0.18 : 0.10;
         if (workspace) {
             workspace.style.backgroundSize = `${minor}px ${minor}px`;
-            workspace.style.backgroundImage = 'radial-gradient(circle at 1px 1px, rgba(34, 139, 34, 0.18) 1px, transparent 0)';
+            workspace.style.backgroundImage = `radial-gradient(circle at ${linePx}px ${linePx}px, rgba(34, 139, 34, 0.18) ${linePx}px, transparent 0)`;
         }
-        if (!grid || !grid.classList.contains('active')) return;
+        if (!grid) return;
+        grid.classList.add('active');
         grid.style.backgroundImage = `
-            linear-gradient(rgba(34, 139, 34, 0.22) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(34, 139, 34, 0.22) 1px, transparent 1px),
-            linear-gradient(rgba(34, 139, 34, 0.10) 1px, transparent 1px),
-            linear-gradient(90deg, rgba(34, 139, 34, 0.10) 1px, transparent 1px)
+            linear-gradient(rgba(34, 139, 34, ${majorAlpha}) ${linePx}px, transparent ${linePx}px),
+            linear-gradient(90deg, rgba(34, 139, 34, ${majorAlpha}) ${linePx}px, transparent ${linePx}px),
+            linear-gradient(rgba(34, 139, 34, ${minorAlpha}) ${linePx}px, transparent ${linePx}px),
+            linear-gradient(90deg, rgba(34, 139, 34, ${minorAlpha}) ${linePx}px, transparent ${linePx}px)
         `;
         grid.style.backgroundSize = `${major}px ${major}px, ${major}px ${major}px, ${minor}px ${minor}px, ${minor}px ${minor}px`;
+    }
+
+    getEquipmentCardSize(equipment) {
+        const widthM = this.parseDimensionMeters(equipment?.width);
+        const lengthM = this.parseDimensionMeters(equipment?.length);
+        const fallbackW = 260;
+        const fallbackH = 260;
+        if (!Number.isFinite(widthM) || !Number.isFinite(lengthM) || widthM <= 0 || lengthM <= 0) {
+            return { widthPx: fallbackW, lengthPx: fallbackH };
+        }
+
+        const widthCm = widthM * 100;
+        const lengthCm = lengthM * 100;
+        const widthPxRaw = Math.round(widthCm * this.cmToPx);
+        const lengthPxRaw = Math.round(lengthCm * this.cmToPx);
+        const baseSnapPx = Math.max(1, Math.round(10 * this.cmToPx)); // база: 10 см
+        // Минимальный визуальный размер карточки на поле:
+        // реальные габариты сохраняем, но не даём карточкам становиться "иголками".
+        const minSize = 220;
+        const maxSize = 900;
+        const snapToBase = (value) => Math.max(baseSnapPx, Math.round(value / baseSnapPx) * baseSnapPx);
+        return {
+            widthPx: Math.max(minSize, Math.min(maxSize, snapToBase(widthPxRaw))),
+            lengthPx: Math.max(minSize, Math.min(maxSize, snapToBase(lengthPxRaw)))
+        };
     }
 
     getZoomPivot() {
@@ -1550,7 +1541,11 @@ class FactoryDesigner {
                 totalCost += eq.cost || 0;
             }
             totalInstallationCost += eq.installation_cost || 0;
-            totalArea += (eq.width || 1) * (eq.length || 1);
+            const widthM = this.parseDimensionMeters(eq.width);
+            const lengthM = this.parseDimensionMeters(eq.length);
+            if (Number.isFinite(widthM) && Number.isFinite(lengthM)) {
+                totalArea += widthM * lengthM;
+            }
             totalDailyOperationCost += eq.daily_operation_cost || 0;
             totalDailyMaintenanceCost += eq.daily_maintenance_cost || 0;
             
@@ -1575,6 +1570,9 @@ class FactoryDesigner {
                 });
             }
             
+            const widthDisplay = this.formatDimensionValue(eq.width);
+            const lengthDisplay = this.formatDimensionValue(eq.length);
+            const heightDisplay = this.formatDimensionValue(eq.height);
             equipmentList.push({
                 name: eq.name,
                 production: production,
@@ -1585,7 +1583,7 @@ class FactoryDesigner {
                 cycle_time: eq.cycle_time || 60,
                 daily_operation: eq.daily_operation_cost || 0,
                 daily_maintenance: eq.daily_maintenance_cost || 0,
-                dimensions: `${eq.width || 1.5}×${eq.length || 3.0}×${eq.height || 2.0} м`
+                dimensions: `${widthDisplay}×${lengthDisplay}×${heightDisplay} м`
             });
         });
         

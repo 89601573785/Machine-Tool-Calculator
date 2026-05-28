@@ -66,7 +66,10 @@ const indexHtml = read('index.html');
 const localRefs = [
     ...indexHtml.matchAll(/(?:href|src)="(css\/[^"]+|js\/[^"]+)"/g)
 ].map(m => m[1]);
-localRefs.forEach(ref => ok(`index.html → ${ref}`, exists(ref)));
+localRefs.forEach(ref => {
+    const cleanRef = ref.split('?')[0];
+    ok(`index.html → ${ref}`, exists(cleanRef));
+});
 
 ok('Порядок: catalog-meta до main.js',
     indexHtml.indexOf('catalog-meta.js') < indexHtml.indexOf('main.js'));
@@ -82,7 +85,7 @@ const domIds = [
     'calculateBtn', 'clearWorkspaceBtn', 'saveProjectBtn', 'loadProjectBtn',
     'exportProjectBtn', 'importProjectBtn', 'projectMenuBtn', 'projectMenuList',
     'connectModeBtn', 'howToUseBtn', 'howToUseModal', 'howToUseTemplate',
-    'snapToggleBtn', 'gridToggleBtn', 'catalogToggleBtn',
+    'catalogToggleBtn', 'gridCellSizeDisplay',
     'conveyorPickerModal', 'conveyorPickerList', 'calculationChoiceModal',
     'calculationsViewModal', 'projectTitleInput'
 ];

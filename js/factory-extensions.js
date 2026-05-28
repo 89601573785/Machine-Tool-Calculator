@@ -35,8 +35,116 @@
         });
     };
 
+    const normalizeText = (value) => (value || '').toString().toLowerCase().replace(/ё/g, 'е');
+    const includesAny = (value, needles) => needles.some(n => value.includes(n));
+    const COMPLEX_SLUG_TEMPLATES = {
+        'lesopilynye_linii/derevoobrabatyvayuschiy_kompleks': {
+            stages: [
+                ['сбц 480', 'бревнопильный станок сбц', 'sbts_480', 'sbc_480'],
+                ['акула 2m', 'многопильный двухвальный акула', 'akula_2m'],
+                ['миг-1000', 'многопильный одновальный миг', 'mig_1000'],
+                ['град-4', 'горбыльно-перерабатывающий станок град', 'grad_4']
+            ]
+        },
+        'lesopilynye_linii/lesopilynyy_kompleks_s_avtomatizatsiey': {
+            stages: [
+                ['тополь 450', 'бревнопил тополь', 'topoly_450', 'topol_450'],
+                ['акула 2m', 'многопильный двухвальный акула', 'akula_2m'],
+                ['миг-1000', 'многопильный одновальный миг', 'mig_1000'],
+                ['град-4', 'горбыльно-перерабатывающий станок град', 'grad_4'],
+                ['тсм 100', 'мультиторцовка триумф тсм', 'tsm_100', 'multitortsovka']
+            ]
+        },
+        'profilirovochnye_stanki/kompleks_stankov_dlya_profilirovaniya_brusa_sbp_200': {
+            stages: [
+                ['сбп 200', 'профилиров', 'sbp_200'],
+                ['тсм 100', 'мультиторцовка', 'торцов', 'tsm_100', 'multitortsovka', 'mulytitortsovka'],
+                ['миг-1000', 'акула 2m', 'mig_1000', 'akula_2m']
+            ]
+        }
+    };
+
+    function resolveTemplateMemberId(allEquipment, selectors = [], used = new Set()) {
+        if (!Array.isArray(allEquipment) || !allEquipment.length) return null;
+        const wanted = selectors.map(s => normalizeText(s));
+        const candidate = allEquipment.find(eq => {
+            if (!eq || used.has(eq.id)) return false;
+            if (eq.catalogType === 'conveyor' || eq.catalogType === 'equipment_complex') return false;
+            const hay = `${normalizeText(eq.name)} ${normalizeText(eq.equipment_type)} ${normalizeText(eq.category)} ${normalizeText(eq.leskomSlug)}`;
+            return includesAny(hay, wanted);
+        });
+        if (!candidate) return null;
+        used.add(candidate.id);
+        return candidate.id;
+    }
+
+    function buildFallbackComplexTemplate(complexEquipment, allEquipment) {
+        const used = new Set();
+        const complexName = normalizeText(complexEquipment?.name);
+        const complexSlug = normalizeText(complexEquipment?.leskomSlug);
+        const members = [];
+
+        const pushStage = (selectors) => {
+            const id = resolveTemplateMemberId(allEquipment, selectors, used);
+            if (id) members.push({ catalogId: id });
+        };
+
+        if (complexName.includes('профилиров') || complexSlug.includes('profilirovochn')) {
+            pushStage(['сбп 200', 'профилиров', 'четырехсторон']);
+            pushStage(['торцов', 'тсм', 'оптимизир']);
+            pushStage(['рольган', 'транспортер', 'конвей']);
+        } else {
+            pushStage(['сбц', 'тополь', 'бревнопил', 'брусовал']);
+            pushStage(['акула', 'многопил', 'двухвальн']);
+            pushStage(['миг', 'кромкообрез', 'скр']);
+            pushStage(['град-4', 'горбыл']);
+            pushStage(['тсм', 'мультиторцов', 'торцов']);
+        }
+
+        if (members.length < 2) return null;
+
+        const connections = [];
+        for (let i = 0; i < members.length - 1; i += 1) {
+            connections.push({
+                fromIndex: i,
+                toIndex: i + 1,
+                conveyorCatalogId: window.CatalogMeta?.DEFAULT_CONVEYOR_ID
+            });
+        }
+
+        return { members, connections };
+    }
+
+    function buildComplexTemplateBySlug(complexEquipment, allEquipment) {
+        const complexSlug = normalizeText(complexEquipment?.leskomSlug);
+        const templateDef = COMPLEX_SLUG_TEMPLATES[complexSlug];
+        if (!templateDef?.stages?.length) return null;
+
+        const used = new Set();
+        const members = [];
+        templateDef.stages.forEach(selectors => {
+            const id = resolveTemplateMemberId(allEquipment, selectors, used);
+            if (id) members.push({ catalogId: id });
+        });
+        if (members.length < 2) return null;
+
+        const connections = [];
+        for (let i = 0; i < members.length - 1; i += 1) {
+            connections.push({
+                fromIndex: i,
+                toIndex: i + 1,
+                conveyorCatalogId: window.CatalogMeta?.DEFAULT_CONVEYOR_ID
+            });
+        }
+
+        return { members, connections };
+    }
+
     FactoryDesigner.prototype.expandComplex = async function (complexEquipment, dropX, dropY) {
-        const template = window.CatalogMeta?.getComplexTemplate(complexEquipment.id);
+        const template =
+            window.CatalogMeta?.getComplexTemplate(complexEquipment.id) ||
+            buildComplexTemplateBySlug(complexEquipment, this.allEquipment || []) ||
+            buildFallbackComplexTemplate(complexEquipment, this.allEquipment || []);
         if (!template || !template.members?.length) {
             this.showNotification('Шаблон комплекса не найден — размещён как карточка', 'warning');
             this.placeEquipmentInstance(complexEquipment, dropX, dropY);
@@ -109,7 +217,8 @@
             }
         }
 
-        this.showNotification(`Комплекс «${complexEquipment.name}» развёрнут (${placementIds.length} станков)`, 'success');
+        const placedCount = placementIds.filter(Boolean).length;
+        this.showNotification(`Комплекс «${complexEquipment.name}» развёрнут (${placedCount} станков)`, 'success');
     };
 
     FactoryDesigner.prototype.computeLineProduction = function () {

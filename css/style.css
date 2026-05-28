@@ -70,15 +70,15 @@ body {
 }
 
 .overlay-sidebar.collapsed {
-    top: 20px;
-    left: 20px;
-    width: auto;
-    height: auto;
-    transform: none;
+    /* Держим ту же геометрию, скрываем только сдвигом влево.
+       Так рабочая область не "дергается" при переключении каталога. */
+    top: 56px;
+    left: 0;
+    width: 320px;
+    height: calc(100vh - 56px);
+    transform: translateX(calc(-100% - 12px));
     padding: 0;
-    box-shadow: none;
-    background: transparent;
-    overflow: visible;
+    overflow: hidden;
 }
 
 .overlay-sidebar.collapsed .sidebar-header {
@@ -561,36 +561,6 @@ body {
     border-color: transparent;
 }
 
-/* Направляющие при выравнивании (как в Figma) */
-.alignment-guides {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    height: 100%;
-    pointer-events: none;
-    z-index: 20;
-}
-
-.alignment-guide {
-    position: absolute;
-    background: rgba(0, 123, 255, 0.85);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.6);
-    border-radius: 1px;
-}
-
-.alignment-guide.vertical {
-    width: 2px;
-    top: 0;
-    bottom: 0;
-}
-
-.alignment-guide.horizontal {
-    height: 2px;
-    left: 0;
-    right: 0;
-}
-
 .btn-sm {
     padding: 0.5rem 1rem;
     font-size: 0.8rem;
@@ -608,6 +578,18 @@ body {
     font-weight: bold;
     min-width: 50px;
     text-align: center;
+}
+
+.grid-cell-size-display {
+    padding: 0.45rem 0.75rem;
+    border: 1px solid #1b4332;
+    color: #1b4332;
+    background: #eef7f0;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    flex-shrink: 0;
 }
 
 .grid-overlay {
@@ -631,7 +613,7 @@ body {
     position: absolute;
     background: linear-gradient(135deg, #8b6f47 0%, #a0826d 100%);
     color: white;
-    border-radius: 10px;
+    border-radius: 0;
     padding: 0.8rem;
     cursor: move;
     box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
@@ -643,6 +625,65 @@ body {
     z-index: 100;
     user-select: none;
     font-size: 0.86rem;
+}
+
+.placed-equipment-image {
+    width: 100%;
+    height: 120px;
+    object-fit: cover;
+    border-radius: 0;
+    margin-bottom: 8px;
+}
+
+.placed-equipment--large {
+    padding: 1rem;
+}
+
+.placed-equipment--large .placed-equipment-image {
+    height: clamp(160px, 35%, 320px);
+}
+
+.placed-equipment--large h4 {
+    font-size: 1.15rem;
+    line-height: 1.25;
+}
+
+.placed-equipment--large p {
+    font-size: 0.92rem;
+}
+
+.placed-equipment--image-only {
+    padding: 0;
+    position: relative;
+    overflow: hidden;
+}
+
+.placed-equipment--image-only .placed-equipment-image {
+    width: 100%;
+    height: 100%;
+    min-height: 100%;
+    margin: 0;
+    object-fit: cover;
+}
+
+.placed-equipment--image-only h4 {
+    display: block;
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 2;
+    margin: 0;
+    padding: 8px 10px;
+    font-size: 0.95rem;
+    line-height: 1.25;
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.75));
+    text-align: left;
+    word-break: break-word;
+}
+
+.placed-equipment--image-only .equipment-stats {
+    display: none;
 }
 
 .equipment-row-badge {
@@ -659,12 +700,12 @@ body {
 }
 
 .placed-equipment:hover {
-    transform: scale(1.05);
+    transform: none;
     box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
 }
 
 .placed-equipment.dragging {
-    transform: scale(1.1) rotate(2deg);
+    transform: none;
     z-index: 1000;
     cursor: grabbing;
 }
