@@ -25,6 +25,8 @@
 | `userId=<id>` | Ключ localStorage (если нет cookie) |
 | `apiBase=/api/v1` | База API (по умолчанию `/api/v1`) |
 | `parentOrigin=<url>` | `targetOrigin` для `postMessage` (по умолчанию `location.origin`) |
+| `staff=1` | Расширенная инструкция «Как пользоваться» (менеджер / `configs.manage`) |
+| `debugSync=1` | Показ интервала опроса в строке статуса (отладка) |
 
 Пример: `/configurator/?embed=1&projectId=a1b2c3d4-e5f6-7890-abcd-ef1234567890`
 
@@ -34,9 +36,13 @@
 
 | Метод | Путь | Описание |
 |-------|------|----------|
-| GET | `/api/v1/configurator/projects/{id}` | Загрузка проекта |
-| POST | `/api/v1/configurator/projects` | Создать/обновить |
+| GET | `/api/v1/configurator/projects/{id}` | Полная схема |
+| GET | `/api/v1/configurator/projects/{id}/sync?session_id=` | `updated_at`, `others_editing`, список редакторов |
+| POST | `/api/v1/configurator/projects/{id}/presence` | Heartbeat вкладки (`body: { session_id }`); не обновляет `updated_at` схемы |
+| POST | `/api/v1/configurator/projects` | Создать/обновить (автосохранение) |
 | GET | `/api/v1/me/configurations` | Список в ЛК (родитель) |
+
+Клиент (`integration.js`): автосохранение ~0,9 с; опрос ~24 с в одиночку / ~4,5 с при `others_editing`; при remote apply — `preserveView: true` (камера не сбрасывается).
 
 ### GET — ответ
 
@@ -105,7 +111,7 @@ factory_designer_{userId}_{projectId}
 - `userId`: `?userId=`, cookie `leskom_user_id`, иначе `guest`
 - `projectId`: из URL или `draft`
 
-Кнопка «Сохранить» — localStorage. «Сохранить в ЛК» — только API.
+Черновик в localStorage обновляется при сохранении на API. Отдельного меню «Проект» / экспорта JSON в embed-режиме нет.
 
 ## Файлы
 

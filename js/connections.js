@@ -176,6 +176,7 @@ class ConnectionManager {
             if (connection.element) connection.element.remove();
         }
         this.connections = this.connections.filter(c => c.id !== connectionId);
+        this.designer?.markProjectDirty?.();
     }
 
     showConnectionContextMenu(connectionId, x, y) {
@@ -208,6 +209,7 @@ class ConnectionManager {
                     this.showNotification('Конвейер обновлён', 'success');
                 }
                 this.drawConnection(conn);
+                this.designer?.markProjectDirty?.();
             });
         });
 
@@ -274,6 +276,7 @@ class ConnectionManager {
                 ? `Связь создана: ${cv.name}`
                 : (hasConveyor ? 'Связь создана' : 'Связь создана (без конвейера)');
             this.showNotification(msg, 'success');
+            this.designer?.markProjectDirty?.();
             return { created: true, id: connectionId };
         };
 
@@ -443,6 +446,7 @@ class ConnectionManager {
             if (connection.element) connection.element.remove();
         });
         this.connections = [];
+        this.designer?.markProjectDirty?.();
     }
 
     showNotification(message, type = 'info') {

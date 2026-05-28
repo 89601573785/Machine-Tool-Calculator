@@ -421,7 +421,7 @@
         }
     };
 
-    FactoryDesigner.prototype.loadProjectFromObject = function (project) {
+    FactoryDesigner.prototype.loadProjectFromObject = async function (project, options = {}) {
         if (!project || (project.version !== 1 && project.version !== 2)) {
             throw new Error('Неподдерживаемый формат проекта');
         }
@@ -429,9 +429,21 @@
             throw new Error('Некорректный проект: отсутствует placed');
         }
 
+        const preserveView = !!options.preserveView;
+        const savedView = preserveView
+            ? { zoom: this.zoom, panX: this.panX, panY: this.panY }
+            : null;
+
         this.clearWorkspace(false);
 
-        if (project.view && typeof project.view.zoom === 'number') {
+        if (preserveView && savedView) {
+            this.zoom = savedView.zoom;
+            this.panX = savedView.panX;
+            this.panY = savedView.panY;
+            this.updateTransform();
+            const zoomLabel = document.getElementById('zoomLevel');
+            if (zoomLabel) zoomLabel.textContent = Math.round(this.zoom * 100) + '%';
+        } else if (project.view && typeof project.view.zoom === 'number') {
             this.zoom = project.view.zoom;
             this.panX = project.view.panX || 0;
             this.panY = project.view.panY || 0;
@@ -470,13 +482,17 @@
 
         const connections = project.connections;
         if (connections?.length) {
-            this.restoreConnections(connections);
+            await this.restoreConnections(connections);
         }
 
         if (this.placedEquipment.length > 0) {
             setTimeout(() => {
                 this.updateGridByZoom?.();
-                this.centerWorkspace?.();
+                if (preserveView) {
+                    this.updateTransform?.();
+                } else {
+                    this.centerWorkspace?.();
+                }
             }, 150);
         }
     };

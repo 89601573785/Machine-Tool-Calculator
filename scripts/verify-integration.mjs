@@ -61,6 +61,12 @@ ok(3, 'GET /configurator/projects/{id}', integrationJs.includes('/configurator/p
 ok(2, 'POST /configurator/projects', integrationJs.includes("apiFetch(params.apiBase, '/configurator/projects'"));
 ok(2, 'serializeProject() при сохранении', integrationJs.includes('designer.serializeProject()'));
 ok(4, 'postMessage leskom:configurator:saved', integrationJs.includes("'leskom:configurator:saved'"));
+ok(2, 'автосохранение scheduleAutosave', integrationJs.includes('scheduleAutosave'));
+ok(3, 'опрос сервера pollRemoteProject', integrationJs.includes('pollRemoteProject'));
+ok(3, 'лёгкий /sync', integrationJs.includes('/sync'));
+ok(3, 'presence heartbeat', integrationJs.includes('/presence'));
+ok(2, 'адаптивный scheduleNextPoll', integrationJs.includes('scheduleNextPoll'));
+ok(2, 'создание до работы createProjectOnServer', integrationJs.includes('createProjectOnServer'));
 ok(5, 'embed-mode на body', integrationJs.includes("'embed-mode'"));
 ok(6, 'storageKey factory_designer_{userId}_{projectId}',
     integrationJs.includes('factory_designer_${userId || \'guest\'}_${projectId || \'draft\'}'));

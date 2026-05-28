@@ -19,6 +19,8 @@ class FactoryDesigner {
         this.isShiftPressed = false;
         this.selectedPlacementId = null;
         this.connectionManager = null;
+        this.selectionManager = null;
+        this._suppressConnectionClick = false;
         this.catalogTab = 'all';
         this.workspaceWidth = 12000;
         this.workspaceHeight = 9000;
@@ -138,6 +140,8 @@ class FactoryDesigner {
         const workspaceArea = document.getElementById('workspaceArea');
         if (workspaceArea) {
             this.connectionManager = new ConnectionManager(workspaceArea);
+            this.selectionManager = new WorkspaceSelectionManager(this);
+            this.selectionManager.attach(workspaceArea);
             // Небольшая задержка для правильного расчета размеров
             setTimeout(() => {
                 this.updateWorkspaceBySidebar();
@@ -706,19 +710,6 @@ class FactoryDesigner {
             this.centerWorkspace();
         });
 
-        const saveBtn = document.getElementById('saveProjectBtn');
-        if (saveBtn) {
-            saveBtn.addEventListener('click', async () => {
-                if (
-                    window.location.protocol !== 'file:' &&
-                    window.LeskomConfiguratorIntegration?.saveProjectToCabinet &&
-                    window.__leskomConfiguratorParams
-                ) {
-                    return;
-                }
-                this.saveProjectToLocalStorage();
-            });
-        }
         const howToUseBtn = document.getElementById('howToUseBtn');
         const howToUseModal = document.getElementById('howToUseModal');
         const closeHowToUse = () => {
@@ -807,13 +798,20 @@ class FactoryDesigner {
             });
             
             workspaceArea.addEventListener('mousedown', (e) => {
-                // Правая/средняя кнопка, Alt+ЛКМ или ЛКМ по пустому месту рабочей области
                 const onEmptyArea = e.button === 0 && (
                     e.target === workspaceArea ||
                     e.target.id === 'gridOverlay' ||
-                    e.target.classList?.contains('grid-overlay')
+                    e.target.classList?.contains('grid-overlay') ||
+                    e.target.classList?.contains('workspace-marquee') ||
+                    e.target.classList?.contains('workspace-selection-bounds')
                 );
-                if (e.button === 2 || e.button === 1 || (e.button === 0 && e.altKey) || onEmptyArea) {
+                if (onEmptyArea && e.button === 0 && !e.altKey && !this.isConnectMode) {
+                    if (this.selectionManager?.beginMarquee(e)) {
+                        return;
+                    }
+                }
+                // Правая/средняя кнопка, Alt+ЛКМ — сдвиг поля
+                if (e.button === 2 || e.button === 1 || (e.button === 0 && e.altKey)) {
                     e.preventDefault();
                     this.isPanning = true;
                     this.lastPanX = e.clientX;
@@ -853,10 +851,15 @@ class FactoryDesigner {
         document.addEventListener('keyup', (e) => { if (e.key === 'Shift') this.isShiftPressed = false; });
 
         document.addEventListener('click', (e) => {
+            if (this._suppressConnectionClick) {
+                this._suppressConnectionClick = false;
+                return;
+            }
             const equipmentElement = e.target.closest('.placed-equipment');
             if (!equipmentElement) return;
             if (this.isShiftPressed || this.isConnectMode) {
                 e.preventDefault();
+                e.stopPropagation();
                 this.handleConnectionSelection(equipmentElement);
             }
         });
@@ -1074,18 +1077,30 @@ class FactoryDesigner {
         this.placedEquipment.push({placementId, equipmentId: equipment.id, element: div, x: safeX, y: safeY, equipment: equipment});
         // Поддерживаем nextPlacementId так, чтобы он всегда был больше любого существующего ID
         if (placementId >= this.nextPlacementId) this.nextPlacementId = placementId + 1;
+        this.markProjectDirty();
         return div;
+    }
+
+    markProjectDirty() {
+        if (this._suppressProjectDirty) return;
+        if (typeof this.onProjectChange === 'function') {
+            this.onProjectChange();
+        }
     }
 
     makeDraggable(element) {
         let isDragging = false;
+        let hasMoved = false;
         let startX, startY, initialX, initialY;
         const workspace = document.getElementById('workspaceArea');
         if (!workspace) return;
+        const dragThreshold = 5;
         
         element.addEventListener('mousedown', (e) => {
             if (e.target.classList.contains('delete-btn')) return;
             if (e.shiftKey) return;
+            hasMoved = false;
+            if (this.selectionManager?.handleEquipmentPointerDown(e, element)) return;
             isDragging = true;
             element.classList.add('dragging');
             const workspaceRect = workspace.getBoundingClientRect();
@@ -1103,6 +1118,17 @@ class FactoryDesigner {
         
         const updatePosition = (e) => {
             if (!isDragging) return;
+            if (!hasMoved) {
+                const workspaceRect = workspace.getBoundingClientRect();
+                const cursorX = (e.clientX - workspaceRect.left) / this.zoom;
+                const cursorY = (e.clientY - workspaceRect.top) / this.zoom;
+                const dx = cursorX - initialX;
+                const dy = cursorY - initialY;
+                if (Math.hypot(dx, dy) > dragThreshold) {
+                    hasMoved = true;
+                    this.selectionManager?.markDragInteraction();
+                }
+            }
             const workspaceRect = workspace.getBoundingClientRect();
             const cursorX = (e.clientX - workspaceRect.left) / this.zoom;
             const cursorY = (e.clientY - workspaceRect.top) / this.zoom;
@@ -1125,23 +1151,34 @@ class FactoryDesigner {
                 placedItem.x = newX;
                 placedItem.y = newY;
             }
-            if (this.connectionManager) {
-                const placementId = parseInt(element.dataset.placementId, 10);
-                if (!isNaN(placementId)) {
-                    this.connectionManager.connections
-                        .filter(conn => conn.fromId === placementId || conn.toId === placementId)
-                        .forEach(conn => {
-                            this.connectionManager.drawConnection(conn);
-                        });
-                }
+            const placementId = parseInt(element.dataset.placementId, 10);
+            if (!isNaN(placementId) && this.selectionManager?.isSelected(placementId)) {
+                this.selectionManager.updateSelectionChrome();
+            }
+            if (this.connectionManager && !isNaN(placementId)) {
+                this.connectionManager.connections
+                    .filter(conn => conn.fromId === placementId || conn.toId === placementId)
+                    .forEach(conn => {
+                        this.connectionManager.drawConnection(conn);
+                    });
             }
         };
         
         const onMouseUp = () => {
-            if (isDragging) {
-                isDragging = false;
-                element.classList.remove('dragging');
+            if (!isDragging) return;
+            isDragging = false;
+            element.classList.remove('dragging');
+            const placementId = parseInt(element.dataset.placementId, 10);
+            if (!Number.isNaN(placementId)) {
+                this.selectionManager?.finishEquipmentPointer(placementId, hasMoved);
+                if (this.selectionManager?.isSelected(placementId)) {
+                    this.selectionManager.updateSelectionChrome();
+                }
             }
+            if (hasMoved) {
+                this._suppressConnectionClick = true;
+            }
+            if (this.markProjectDirty) this.markProjectDirty();
         };
         
         document.addEventListener('mousemove', updatePosition);
@@ -1167,7 +1204,9 @@ class FactoryDesigner {
             element._dragCleanup = null;
         }
         this.placedEquipment = this.placedEquipment.filter(item => item.placementId !== placementId);
+        this.selectionManager?.onEquipmentRemoved(placementId);
         element.remove();
+        this.markProjectDirty();
     }
 
     clearWorkspace(askConfirm = true) {
@@ -1185,6 +1224,8 @@ class FactoryDesigner {
         }
         this.placedEquipment = [];
         this.selectedPlacementId = null;
+        this.selectionManager?.onWorkspaceCleared();
+        if (askConfirm) this.markProjectDirty();
     }
 
     serializeProject() {

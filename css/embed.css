@@ -55,8 +55,58 @@ body.embed-mode .overlay-sidebar {
     max-width: 220px;
 }
 
-body.embed-mode .project-title-wrap {
+body.embed-mode .project-title-wrap:not([hidden]) {
     display: flex;
+}
+
+.project-sync-status {
+    font-size: 0.72rem;
+    color: #6c757d;
+    white-space: nowrap;
+    opacity: 0;
+    transform: translateY(2px);
+    transition: opacity 0.35s ease, transform 0.35s ease, color 0.35s ease;
+}
+
+.project-sync-status--visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+.project-sync-status--leaving {
+    opacity: 0;
+    transform: translateY(-2px);
+}
+
+.workspace-container.workspace-sync-active {
+    transition: opacity 0.28s ease-out, filter 0.28s ease-out;
+}
+
+.workspace-container.workspace-sync-dimmed {
+    opacity: 0.38;
+    filter: blur(0.5px);
+    pointer-events: none;
+}
+
+.workspace-container.workspace-sync-restored {
+    opacity: 1;
+    filter: none;
+}
+
+.project-sync-status--busy {
+    color: #856404;
+}
+
+.project-sync-status--ok {
+    color: #198754;
+}
+
+.project-sync-status--error {
+    color: #dc3545;
+}
+
+.project-sync-status--info {
+    color: #0d6efd;
 }
 
 body.embed-mode #saveToCabinetBtn {

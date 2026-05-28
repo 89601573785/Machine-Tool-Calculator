@@ -4,10 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Онлайн-сборщик производственного цеха</title>
-    <link rel="stylesheet" href="css/style.css?v=20260528-help-split">
-    <link rel="stylesheet" href="css/theme.css?v=20260528-help-split">
-    <link rel="stylesheet" href="css/connections.css?v=20260528-help-split">
-    <link rel="stylesheet" href="css/embed.css?v=20260528-help-split">
+    <link rel="stylesheet" href="css/style.css?v=20260528-keep-view">
+    <link rel="stylesheet" href="css/theme.css?v=20260528-keep-view">
+    <link rel="stylesheet" href="css/connections.css?v=20260528-keep-view">
+    <link rel="stylesheet" href="css/embed.css?v=20260528-keep-view">
+    <link rel="stylesheet" href="css/workspace-selection.css?v=20260528-keep-view">
     <!-- Локальный file:// режим: используем CDN, чтобы избежать CORS на wasm -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -47,7 +48,7 @@
             </aside>
             
             <main class="workspace" id="workspaceMain">
-                <div class="workspace-container" id="workspaceContainer">
+                <div class="workspace-container" id="workspaceContainer" tabindex="0" aria-label="Рабочая область конфигуратора">
                     <div class="workspace-area" id="workspaceArea">
                         <div class="grid-overlay" id="gridOverlay"></div>
                         <div class="workspace-top-edge" aria-hidden="true"></div>
@@ -62,12 +63,12 @@
                 </div>
                 
                 <div class="workspace-top-controls">
-                    <div id="projectTitleWrap" class="project-title-wrap">
-                        <input type="text" id="projectTitleInput" placeholder="Название линии" maxlength="120" title="Название сохранённой конфигурации">
+                    <div id="projectTitleWrap" class="project-title-wrap" hidden>
+                        <input type="text" id="projectTitleInput" placeholder="Название конфигурации" maxlength="120" title="Наименование конфигурации">
+                        <span id="projectSyncStatus" class="project-sync-status" hidden aria-live="polite"></span>
                     </div>
                     <button id="catalogToggleBtn" class="btn btn-outline btn-sm" title="Показать/скрыть каталог оборудования"><i class="fas fa-tools"></i><span class="btn-label"> Каталог</span></button>
                     <button id="clearWorkspaceBtn" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i><span class="btn-label"> Очистить</span></button>
-                    <button id="saveProjectBtn" class="btn btn-outline btn-sm" title="Сохранить линию в личный кабинет"><i class="fas fa-save"></i><span class="btn-label"> Сохранить</span></button>
                     <button id="connectModeBtn" class="btn btn-outline btn-sm" title="Режим связывания станков"><i class="fas fa-link"></i><span class="btn-label"> Связать</span></button>
                     <button id="howToUseBtn" class="btn btn-outline btn-sm" title="Инструкция по использованию"><i class="fas fa-circle-info"></i><span class="btn-label"> Как пользоваться</span></button>
                     <div id="gridCellSizeDisplay" class="grid-cell-size-display" title="Текущий шаг сетки">Клетка: 20 см</div>
@@ -94,19 +95,19 @@
     <div id="saveProjectModal" class="modal" style="display: none;">
         <div class="modal-content" style="max-width: 440px;">
             <div class="modal-header">
-                <h3><i class="fas fa-save"></i> Сохранить конфигурацию</h3>
+                <h3><i class="fas fa-file-circle-plus"></i> Новая конфигурация</h3>
                 <span class="close" id="saveProjectModalClose">&times;</span>
             </div>
             <div class="modal-body">
                 <p style="margin: 0 0 12px; color: #555; font-size: 0.9rem;">
-                    Укажите название — его увидите вы и менеджеры в личном кабинете.
+                    Укажите наименование конфигурации перед началом работы. Оно будет отображаться в личном кабинете.
                 </p>
-                <label for="saveProjectModalInput" style="display:block; font-weight:600; margin-bottom:6px;">Название</label>
-                <input type="text" id="saveProjectModalInput" class="search-input" maxlength="120" placeholder="Например: Линия СБЦ + Акула" style="width:100%; box-sizing:border-box;">
+                <label for="saveProjectModalInput" style="display:block; font-weight:600; margin-bottom:6px;">Наименование</label>
+                <input type="text" id="saveProjectModalInput" class="search-input" maxlength="120" placeholder="Например: Лесопильная линия №1" style="width:100%; box-sizing:border-box;">
             </div>
             <div class="modal-footer" style="display:flex; gap:8px; justify-content:flex-end;">
                 <button type="button" class="btn btn-secondary" id="saveProjectModalCancel">Отмена</button>
-                <button type="button" class="btn btn-primary" id="saveProjectModalConfirm">Сохранить</button>
+                <button type="button" class="btn btn-primary" id="saveProjectModalConfirm">Создать</button>
             </div>
         </div>
     </div>
@@ -194,7 +195,6 @@
                     <tr><td><strong>Название линии</strong></td><td>Наименование сохраняемой конфигурации.</td></tr>
                     <tr><td><strong>Каталог</strong></td><td>Отображение или скрытие списка оборудования.</td></tr>
                     <tr><td><strong>Очистить</strong></td><td>Удаление всех объектов с рабочей области (с подтверждением).</td></tr>
-                    <tr><td><strong>Сохранить</strong></td><td>Сохранение схемы в личный кабинет.</td></tr>
                     <tr><td><strong>Связать</strong></td><td>Режим установки технологической связи между станками.</td></tr>
                     <tr><td><strong>Рассчитать</strong></td><td>Выполнение расчёта и формирование отчёта (экран / PDF).</td></tr>
                 </tbody>
@@ -208,23 +208,37 @@
                 <li><strong>Комплексы</strong> — типовые линии с автоматическим размещением состава.</li>
             </ul>
 
+            <h4 class="how-to-use-heading">Навигация по полю</h4>
+            <ul>
+                <li><strong>Масштаб</strong> — <kbd>Ctrl</kbd> + колёсико мыши или кнопки <strong>− / +</strong> на панели.</li>
+                <li><strong>Сдвиг</strong> — зажатый <kbd>Alt</kbd>, средняя или правая кнопка мыши, либо ЛКМ по пустому месту (не в режиме «Связать»).</li>
+                <li><strong>Центр</strong> — кнопка <strong>⊙</strong> вернёт вид к центру рабочей области.</li>
+            </ul>
+
             <h4 class="how-to-use-heading">Рабочая область</h4>
             <ul>
-                <li>Перемещение объекта — перетаскивание карточки.</li>
-                <li>Удаление — кнопка <strong>×</strong> на карточке.</li>
-                <li>Красная пунктирная линия обозначает границу области.</li>
+                <li>Выделение — ЛКМ на пустом месте, протяните рамку (как в Windows).</li>
+                <li>Группа — перетащите любой станок из выделения; удаление — <kbd>Delete</kbd> или кнопка на рамке.</li>
+                <li>Один станок — перетащите карточку; удаление — <strong>×</strong> на карточке.</li>
+                <li>Красная пунктирная линия — граница рабочей зоны.</li>
             </ul>
 
             <h4 class="how-to-use-heading">Связи</h4>
             <ol>
-                <li>Активируйте <strong>«Связать»</strong> (или <kbd>Shift</kbd> + два последовательных щелчка по станкам).</li>
-                <li>Укажите станок-источник, затем станок-приёмник.</li>
-                <li>Выберите тип конвейера или пункт <strong>«Без конвейера»</strong>.</li>
+                <li><strong>«Связать»</strong> или <kbd>Shift</kbd> + два щелчка по станкам <em>без сдвига</em> мыши.</li>
+                <li>Сначала источник, затем приёмник.</li>
+                <li>Конвейер из каталога или <strong>«Без конвейера»</strong>.</li>
             </ol>
-            <p>Редактирование связи — контекстное меню (<strong>ПКМ</strong>) по линии связи.</p>
+            <p>В режиме «Связать» рамка выделения не используется. Перетаскивание станка не создаёт связь. Правка связи — <strong>ПКМ</strong> по линии.</p>
 
-            <h4 class="how-to-use-heading">Сохранение</h4>
-            <p>После нажатия <strong>«Сохранить»</strong> конфигурация доступна в личном кабинете в разделе <strong>«Мои конфигурации»</strong>.</p>
+            <h4 class="how-to-use-heading">Сохранение и обновления</h4>
+            <ul>
+                <li>Изменения сохраняются <strong>авоматически</strong> (кнопки «Сохранить» нет).</li>
+                <li>Если вы один — сервер проверяется примерно раз в полминуты.</li>
+                <li>Если схему открыли в двух окнах или зашёл ещё пользователь — обновления приходят чаще, поле кратко затемняется; <strong>ваш масштаб и положение камеры не сбрасываются</strong>.</li>
+                <li>Пока вы перетаскиваете станок, чужие правки подождут до отпускания мыши.</li>
+                <li>Список конфигураций — <strong>«Мои конфигурации»</strong> в личном кабинете.</li>
+            </ul>
         </div>
     </template>
 
@@ -241,7 +255,7 @@
                     <tr><td><strong>Название линии</strong></td><td>Наименование конфигурации, отображаемое в личном кабинете и в реестре менеджера.</td></tr>
                     <tr><td><strong>Каталог</strong></td><td>Отображение или скрытие списка оборудования.</td></tr>
                     <tr><td><strong>Очистить</strong></td><td>Удаление всех объектов с рабочей области (с подтверждением).</td></tr>
-                    <tr><td><strong>Сохранить</strong></td><td>Сохранение схемы в учётную запись пользователя (личный кабинет / API).</td></tr>
+                    <tr><td><strong>Название</strong></td><td>Наименование конфигурации; изменения сохраняются автоматически.</td></tr>
                     <tr><td><strong>Связать</strong></td><td>Режим установки технологической связи между станками.</td></tr>
                     <tr><td><strong>Клетка</strong></td><td>Текущий шаг координатной сетки; привязка объектов к сетке активна постоянно.</td></tr>
                     <tr><td><strong>− / + / ⊙</strong></td><td>Изменение масштаба и центрирование рабочей области.</td></tr>
@@ -257,20 +271,30 @@
                 <li><strong>Комплексы</strong> — типовые лесопильные линии с автоматическим развёртыванием состава и связей.</li>
             </ul>
 
+            <h4 class="how-to-use-heading">Навигация по рабочей области</h4>
+            <ul>
+                <li>Масштаб — <kbd>Ctrl</kbd> + колёсико или <strong>− / +</strong>; подпись процента на панели.</li>
+                <li>Панорамирование — <kbd>Alt</kbd>, СКМ, ПКМ или ЛКМ по пустому фону (вне режима «Связать»).</li>
+                <li>Кнопка <strong>⊙</strong> — центрирование вида (ручное действие; при автосинхронизации центр не вызывается).</li>
+                <li>Шаг сетки — поле <strong>«Клетка»</strong>; привязка к сетке включена.</li>
+            </ul>
+
             <h4 class="how-to-use-heading">Рабочая область</h4>
             <ul>
-                <li>Перемещение — перетаскивание карточки оборудования.</li>
-                <li>Удаление — элемент <strong>×</strong> на карточке.</li>
-                <li>Граница области обозначена красной пунктирной линией.</li>
+                <li>Рамка выделения — ЛКМ на пустом месте с протягиванием; синяя обводка выбранных станков.</li>
+                <li>Групповое перемещение и удаление (<kbd>Delete</kbd> или кнопка на рамке выделения).</li>
+                <li>Одиночный станок — drag карточки; <strong>×</strong> — удаление.</li>
+                <li>В режиме <strong>«Связать»</strong> / <kbd>Shift</kbd> выделение не перехватывает клики по станкам.</li>
+                <li>Граница — красная пунктирная линия.</li>
             </ul>
 
             <h4 class="how-to-use-heading">Технологические связи</h4>
             <ol>
-                <li>Активируется режим <strong>«Связать»</strong> или используется сочетание <kbd>Shift</kbd> и два щелчка по станкам.</li>
-                <li>Указываются станок-источник и станок-приёмник потока материала.</li>
-                <li>В диалоге выбирается конвейер из каталога либо вариант <strong>«Без конвейера»</strong> (связь без учёта транспортёра в стоимости).</li>
+                <li>Режим <strong>«Связать»</strong> или <kbd>Shift</kbd> + два щелчка <em>без перемещения</em> мыши между кликами.</li>
+                <li>Станок-источник, затем приёмник.</li>
+                <li>Конвейер из каталога или <strong>«Без конвейера»</strong> (без учёта транспортёра в стоимости).</li>
             </ol>
-            <p>Для каждой пары станков формируется отдельная связь. Изменение параметров связи — через контекстное меню (<strong>ПКМ</strong>) по линии. При повторном открытии сохранённой конфигурации связи восстанавливаются в том числе без назначенного конвейера.</p>
+            <p>На пару станков — одна связь. Редактирование — <strong>ПКМ</strong> по линии. После перетаскивания станка случайная связь не создаётся. Сохранённые пустые связи восстанавливаются при открытии.</p>
 
             <h4 class="how-to-use-heading">Расчёт и отчётность</h4>
             <ul>
@@ -280,26 +304,33 @@
                 <li>Позиции с ценой «по запросу» в суммарные показатели не включаются и выделяются в отчёте отдельно.</li>
             </ul>
 
-            <h4 class="how-to-use-heading">Сохранение конфигураций</h4>
+            <h4 class="how-to-use-heading">Сохранение и синхронизация</h4>
             <ul>
-                <li>Клиент: кнопка <strong>«Сохранить»</strong>, раздел <strong>«Мои конфигурации»</strong> личного кабинета.</li>
+                <li>Автосохранение на сервер ~0,9 с после последней правки; отдельной кнопки «Сохранить» нет.</li>
+                <li>Один редактор — лёгкий опрос сервера ~24 с; присутствие вкладки (heartbeat) не меняет время изменения схемы.</li>
+                <li>Два окна одной схемы или клиент + менеджер — опрос ~4,5 с, подтягивание чужих правок с плавным затуханием поля.</li>
+                <li>При подгрузке с сервера сохраняются <strong>текущий масштаб и смещение</strong> камеры (без принудительного центрирования).</li>
+                <li>Во время перетаскивания или несохранённой правки удалённая схема не применяется — только после паузы.</li>
+                <li>Новая конфигурация — запрос названия при первом входе без <code>projectId</code>.</li>
             </ul>
 
-            <h4 class="how-to-use-heading">Просмотр конфигураций клиентов (менеджер)</h4>
+            <h4 class="how-to-use-heading">Конфигурации в личном кабинете</h4>
             <ul>
-                <li>Раздел <strong>«Конфигурации клиентов»</strong> в личном кабинете (доступ при наличии соответствующих прав).</li>
-                <li>Открытие схемы — кнопка <strong>«Открыть схему»</strong> в строке конфигурации; просмотр выполняется в текущей вкладке браузера.</li>
-                <li>Доступен просмотр метаданных конфигурации в формате JSON.</li>
+                <li><strong>«Мои конфигурации»</strong> — список собственных схем клиента.</li>
+                <li><strong>«Конфигурации клиентов»</strong> — реестр при праве <code>configs.manage</code> (и аналогичных ролях).</li>
+                <li>Открытие схемы клиента — <strong>«Открыть схему»</strong> в той же вкладке; iframe получает <code>staff=1</code> для полной инструкции.</li>
+                <li>Метаданные записи можно просмотреть в JSON (админ-раздел).</li>
             </ul>
         </div>
     </template>
 
-    <script src="js/equipment-data.js?v=20260528-help-split"></script>
-    <script src="js/catalog-meta.js?v=20260528-help-split"></script>
-    <script src="js/connections.js?v=20260528-help-split"></script>
-    <script src="js/integration.js?v=20260528-help-split"></script>
-    <script src="js/main.js?v=20260528-help-split"></script>
-    <script src="js/factory-extensions.js?v=20260528-help-split"></script>
+    <script src="js/equipment-data.js?v=20260528-keep-view"></script>
+    <script src="js/catalog-meta.js?v=20260528-keep-view"></script>
+    <script src="js/connections.js?v=20260528-keep-view"></script>
+    <script src="js/workspace-selection.js?v=20260528-keep-view"></script>
+    <script src="js/integration.js?v=20260528-keep-view"></script>
+    <script src="js/main.js?v=20260528-keep-view"></script>
+    <script src="js/factory-extensions.js?v=20260528-keep-view"></script>
 </body>
 </html>
 
