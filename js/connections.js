@@ -176,6 +176,7 @@ class ConnectionManager {
             if (connection.element) connection.element.remove();
         }
         this.connections = this.connections.filter(c => c.id !== connectionId);
+        this.redrawAllConnections();
         this.designer?.markProjectDirty?.();
     }
 
@@ -208,7 +209,7 @@ class ConnectionManager {
                     conn.conveyorName = cv?.name || 'Конвейер';
                     this.showNotification('Конвейер обновлён', 'success');
                 }
-                this.drawConnection(conn);
+                this.redrawAllConnections();
                 this.designer?.markProjectDirty?.();
             });
         });
@@ -241,9 +242,10 @@ class ConnectionManager {
 
     createConnection(fromId, toId, fromSide, toSide, options = {}) {
         const opts = typeof options === 'object' && options !== null ? options : {};
+        const silent = !!opts.silent;
         const can = this.canConnect(fromId, toId, { ignoreCompatibility: opts.ignoreCompatibility === true });
         if (!can.ok) {
-            this.showNotification(can.message, 'error');
+            if (!silent) this.showNotification(can.message, 'error');
             return Promise.resolve({ created: false, reason: can.message });
         }
 
@@ -251,7 +253,7 @@ class ConnectionManager {
             conn.fromId === fromId && conn.toId === toId
         );
         if (existing) {
-            this.showNotification('Соединение уже существует', 'warning');
+            if (!silent) this.showNotification('Соединение уже существует', 'warning');
             return Promise.resolve({ created: false, reason: 'exists' });
         }
 
@@ -271,11 +273,15 @@ class ConnectionManager {
             };
             if (hasConveyor) this.lastConveyorCatalogId = conveyorCatalogId;
             this.connections.push(connection);
-            this.drawConnection(connection);
-            const msg = hasConveyor && cv
-                ? `Связь создана: ${cv.name}`
-                : (hasConveyor ? 'Связь создана' : 'Связь создана (без конвейера)');
-            this.showNotification(msg, 'success');
+            if (!opts._deferRedraw) {
+                this.redrawAllConnections();
+            }
+            if (!opts.silent) {
+                const msg = hasConveyor && cv
+                    ? `Связь создана: ${cv.name}`
+                    : (hasConveyor ? 'Связь создана' : 'Связь создана (без конвейера)');
+                this.showNotification(msg, 'success');
+            }
             this.designer?.markProjectDirty?.();
             return { created: true, id: connectionId };
         };
@@ -304,43 +310,254 @@ class ConnectionManager {
         return `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`;
     }
 
+    getElementCenter(stationId) {
+        const el = this.getStationElementById(stationId);
+        if (!el) return null;
+        return {
+            x: el.offsetLeft + (el.offsetWidth || 120) / 2,
+            y: el.offsetTop + (el.offsetHeight || 200) / 2
+        };
+    }
+
+    prepareConnectionLayout() {
+        for (const conn of this.connections) {
+            const fromEl = this.getStationElementById(conn.fromId);
+            const toEl = this.getStationElementById(conn.toId);
+            if (!fromEl || !toEl) continue;
+            const sides = this.resolveConnectionSides(fromEl, toEl, conn);
+            conn._fromSide = sides.fromSide;
+            conn._toSide = sides.toSide;
+        }
+
+        const outBySide = new Map();
+        const inBySide = new Map();
+        const outByFrom = new Map();
+
+        for (const conn of this.connections) {
+            const fromKey = `${conn.fromId}:${conn._fromSide}`;
+            if (!outBySide.has(fromKey)) outBySide.set(fromKey, []);
+            outBySide.get(fromKey).push(conn);
+
+            const toKey = `${conn.toId}:${conn._toSide}`;
+            if (!inBySide.has(toKey)) inBySide.set(toKey, []);
+            inBySide.get(toKey).push(conn);
+
+            if (!outByFrom.has(conn.fromId)) outByFrom.set(conn.fromId, []);
+            outByFrom.get(conn.fromId).push(conn);
+        }
+
+        const byTargetAngle = (a, b) => {
+            const fc = this.getElementCenter(a.fromId);
+            const ta = this.getElementCenter(a.toId);
+            const tb = this.getElementCenter(b.toId);
+            if (!fc || !ta || !tb) return 0;
+            return Math.atan2(ta.y - fc.y, ta.x - fc.x) - Math.atan2(tb.y - fc.y, tb.x - fc.x);
+        };
+        const bySourceAngle = (a, b) => {
+            const tc = this.getElementCenter(a.toId);
+            const fa = this.getElementCenter(a.fromId);
+            const fb = this.getElementCenter(b.fromId);
+            if (!tc || !fa || !fb) return 0;
+            return Math.atan2(fa.y - tc.y, fa.x - tc.x) - Math.atan2(fb.y - tc.y, fb.x - tc.x);
+        };
+
+        for (const list of outBySide.values()) {
+            list.sort(byTargetAngle);
+            const n = list.length;
+            list.forEach((conn, i) => {
+                conn._fromPortIndex = i;
+                conn._fromPortCount = n;
+            });
+        }
+
+        for (const list of inBySide.values()) {
+            list.sort(bySourceAngle);
+            const n = list.length;
+            list.forEach((conn, i) => {
+                conn._toPortIndex = i;
+                conn._toPortCount = n;
+            });
+        }
+
+        for (const list of outByFrom.values()) {
+            list.sort(byTargetAngle);
+            const n = list.length;
+            list.forEach((conn, i) => {
+                conn._laneIndex = i;
+                conn._laneCount = n;
+            });
+        }
+
+        for (const conn of this.connections) {
+            conn._fromPortIndex = conn._fromPortIndex ?? 0;
+            conn._fromPortCount = conn._fromPortCount ?? 1;
+            conn._toPortIndex = conn._toPortIndex ?? 0;
+            conn._toPortCount = conn._toPortCount ?? 1;
+            conn._laneIndex = conn._laneIndex ?? 0;
+            conn._laneCount = conn._laneCount ?? 1;
+        }
+    }
+
+    getSidePoint(element, side, portIndex, portCount) {
+        const left = element.offsetLeft;
+        const top = element.offsetTop;
+        const w = element.offsetWidth || 120;
+        const h = element.offsetHeight || 200;
+        const cx = left + w / 2;
+        const cy = top + h / 2;
+        const spreadAxis = (side === 'left' || side === 'right') ? h : w;
+        const maxSpread = Math.min(120, Math.max(36, spreadAxis * 0.55));
+        const step = portCount > 1 ? maxSpread / (portCount - 1) : 0;
+        const offset = portCount > 1 ? (portIndex - (portCount - 1) / 2) * step : 0;
+
+        switch (side) {
+            case 'left':
+                return { x: left, y: cy + offset, dir: 'h' };
+            case 'right':
+                return { x: left + w, y: cy + offset, dir: 'h' };
+            case 'top':
+                return { x: cx + offset, y: top, dir: 'v' };
+            case 'bottom':
+                return { x: cx + offset, y: top + h, dir: 'v' };
+            default:
+                return { x: left + w, y: cy + offset, dir: 'h' };
+        }
+    }
+
+    resolveConnectionSides(fromEl, toEl, conn) {
+        const fromCenterX = fromEl.offsetLeft + (fromEl.offsetWidth || 120) / 2;
+        const fromCenterY = fromEl.offsetTop + (fromEl.offsetHeight || 200) / 2;
+        const toCenterX = toEl.offsetLeft + (toEl.offsetWidth || 120) / 2;
+        const toCenterY = toEl.offsetTop + (toEl.offsetHeight || 200) / 2;
+        const dx = toCenterX - fromCenterX;
+        const dy = toCenterY - fromCenterY;
+
+        const autoHorizontal = Math.abs(dx) >= Math.abs(dy) * 0.55;
+        const auto = autoHorizontal
+            ? (dx > 0 ? { fromSide: 'right', toSide: 'left' } : { fromSide: 'left', toSide: 'right' })
+            : (dy > 0 ? { fromSide: 'bottom', toSide: 'top' } : { fromSide: 'top', toSide: 'bottom' });
+
+        if (!conn.fromSide || !conn.toSide) {
+            return auto;
+        }
+
+        const wantsHorizontal =
+            (conn.fromSide === 'right' && conn.toSide === 'left') ||
+            (conn.fromSide === 'left' && conn.toSide === 'right');
+
+        if (wantsHorizontal) {
+            if (Math.abs(dy) > Math.abs(dx) * 0.85) return auto;
+            if (conn.fromSide === 'right' && dx <= 0) return auto;
+            if (conn.fromSide === 'left' && dx >= 0) return auto;
+            return { fromSide: conn.fromSide, toSide: conn.toSide };
+        }
+
+        return auto;
+    }
+
+    buildRoutedPath(x1, y1, x2, y2, startDir, endDir, laneIndex, laneCount) {
+        const STUB = 40;
+        const LANE = 64;
+        const laneShift = laneCount > 1 ? (laneIndex - (laneCount - 1) / 2) * LANE : 0;
+        const laneStep = (laneIndex + 1) * 46;
+
+        if (Math.abs(x1 - x2) < 3 && Math.abs(y1 - y2) < 3) {
+            return { d: `M ${x1} ${y1} L ${x2} ${y2}`, labelX: x1, labelY: y1 - 18, labelSegLen: 0 };
+        }
+
+        if (startDir === 'h' && endDir === 'h') {
+            const sign = Math.sign(x2 - x1) || 1;
+            const spanX = Math.abs(x2 - x1);
+            if (Math.abs(y1 - y2) < 5) {
+                const labelY = Math.min(y1, y2) - 22 - Math.abs(laneShift) * 0.15;
+                return {
+                    d: `M ${x1} ${y1} L ${x2} ${y2}`,
+                    labelX: (x1 + x2) / 2,
+                    labelY,
+                    labelSegLen: spanX
+                };
+            }
+            const midX = (x1 + x2) / 2 + laneShift * sign;
+            const d = `M ${x1} ${y1} L ${x1 + sign * STUB} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2 - sign * STUB} ${y2} L ${x2} ${y2}`;
+            return { d, labelX: midX, labelY: (y1 + y2) / 2, labelSegLen: Math.abs(y2 - y1) };
+        }
+
+        if (startDir === 'v' && endDir === 'v') {
+            const sign = Math.sign(y2 - y1) || 1;
+            const spanY = Math.abs(y2 - y1);
+            if (Math.abs(x1 - x2) < 5) {
+                const labelX = Math.min(x1, x2) - 22 - Math.abs(laneShift) * 0.15;
+                return {
+                    d: `M ${x1} ${y1} L ${x2} ${y2}`,
+                    labelX,
+                    labelY: (y1 + y2) / 2,
+                    labelSegLen: spanY
+                };
+            }
+            const midY = (y1 + y2) / 2 + laneShift * sign;
+            const d = `M ${x1} ${y1} L ${x1} ${y1 + sign * STUB} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2 - sign * STUB} L ${x2} ${y2}`;
+            return { d, labelX: (x1 + x2) / 2, labelY: midY, labelSegLen: Math.abs(x2 - x1) };
+        }
+
+        if (startDir === 'h' && endDir === 'v') {
+            const signX = Math.sign(x2 - x1) || 1;
+            const signY = Math.sign(y2 - y1) || 1;
+            const corridorX = x2 + signX * (STUB + laneStep);
+            const d = `M ${x1} ${y1} L ${x1 + signX * STUB} ${y1} L ${corridorX} ${y1} L ${corridorX} ${y2} L ${x2} ${y2}`;
+            return {
+                d,
+                labelX: corridorX + signX * 16,
+                labelY: (y1 + y2) / 2,
+                labelSegLen: Math.abs(corridorX - x1) + Math.abs(y2 - y1)
+            };
+        }
+
+        const signY = Math.sign(y2 - y1) || 1;
+        const signX = Math.sign(x2 - x1) || 1;
+        const corridorY = y1 + signY * (STUB + laneStep);
+        const d = `M ${x1} ${y1} L ${x1} ${corridorY} L ${x2} ${corridorY} L ${x2} ${y2}`;
+        return {
+            d,
+            labelX: (x1 + x2) / 2,
+            labelY: corridorY + signY * 16,
+            labelSegLen: Math.abs(x2 - x1) + Math.abs(corridorY - y1)
+        };
+    }
+
+    redrawAllConnections() {
+        this.prepareConnectionLayout();
+        for (const conn of this.connections) {
+            this.drawConnection(conn);
+        }
+    }
+
     drawConnection(connection) {
         const fromElement = this.getStationElementById(connection.fromId);
         const toElement = this.getStationElementById(connection.toId);
         if (!fromElement || !toElement) return;
 
-        const fromLeft = fromElement.offsetLeft;
-        const fromTop = fromElement.offsetTop;
-        const fromWidth = fromElement.offsetWidth || 120;
-        const fromHeight = fromElement.offsetHeight || 200;
-        const toLeft = toElement.offsetLeft;
-        const toTop = toElement.offsetTop;
-        const toWidth = toElement.offsetWidth || 120;
-        const toHeight = toElement.offsetHeight || 200;
-
-        const fromCenterX = fromLeft + fromWidth / 2;
-        const fromCenterY = fromTop + fromHeight / 2;
-        const toCenterX = toLeft + toWidth / 2;
-        const toCenterY = toTop + toHeight / 2;
-        const dx = toCenterX - fromCenterX;
-        const dy = toCenterY - fromCenterY;
-
-        let x1, y1, x2, y2;
-        if (Math.abs(dx) > Math.abs(dy)) {
-            if (dx > 0) {
-                x1 = fromLeft + fromWidth; y1 = fromCenterY;
-                x2 = toLeft; y2 = toCenterY;
-            } else {
-                x1 = fromLeft; y1 = fromCenterY;
-                x2 = toLeft + toWidth; y2 = toCenterY;
-            }
-        } else if (dy > 0) {
-            x1 = fromCenterX; y1 = fromTop + fromHeight;
-            x2 = toCenterX; y2 = toTop;
-        } else {
-            x1 = fromCenterX; y1 = fromTop;
-            x2 = toCenterX; y2 = toTop + toHeight;
-        }
+        const sides = {
+            fromSide: connection._fromSide || 'right',
+            toSide: connection._toSide || 'left'
+        };
+        const fromPt = this.getSidePoint(
+            fromElement,
+            sides.fromSide,
+            connection._fromPortIndex ?? 0,
+            connection._fromPortCount ?? 1
+        );
+        const toPt = this.getSidePoint(
+            toElement,
+            sides.toSide,
+            connection._toPortIndex ?? 0,
+            connection._toPortCount ?? 1
+        );
+        const x1 = fromPt.x;
+        const y1 = fromPt.y;
+        const x2 = toPt.x;
+        const y2 = toPt.y;
+        const startDir = fromPt.dir;
+        const endDir = toPt.dir;
 
         if (connection.element) {
             if (connection._cleanup) connection._cleanup();
@@ -355,7 +572,7 @@ class ConnectionManager {
         svg.setAttribute('class', 'connection-line' + (hasConveyor ? ' connection-line--conveyor' : ''));
         Object.assign(svg.style, {
             position: 'absolute', left: '0', top: '0', width: '100%', height: '100%',
-            pointerEvents: 'none', zIndex: '5'
+            pointerEvents: 'none', zIndex: String(5 + (connection._laneIndex ?? 0))
         });
         svg.setAttribute('data-connection-id', connection.id);
 
@@ -381,12 +598,14 @@ class ConnectionManager {
         defs.appendChild(marker);
         svg.appendChild(defs);
 
-        const EPS = 0.01;
-        const startDir = (Math.abs(x1 - fromLeft) < EPS || Math.abs(x1 - (fromLeft + fromWidth)) < EPS) ? 'h' : 'v';
-        const endDir = (Math.abs(x2 - toLeft) < EPS || Math.abs(x2 - (toLeft + toWidth)) < EPS) ? 'h' : 'v';
+        const routed = this.buildRoutedPath(
+            x1, y1, x2, y2, startDir, endDir,
+            connection._laneIndex ?? 0,
+            connection._laneCount ?? 1
+        );
 
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        path.setAttribute('d', this.buildOrthogonalPath(x1, y1, x2, y2, startDir, endDir));
+        path.setAttribute('d', routed.d);
         path.setAttribute('stroke', strokeColor);
         path.setAttribute('stroke-width', hasConveyor ? '5' : '4');
         path.setAttribute('fill', 'none');
@@ -402,12 +621,16 @@ class ConnectionManager {
             this.showConnectionContextMenu(connection.id, e.clientX, e.clientY);
         };
         path.addEventListener('contextmenu', onContextMenu);
+        if (label) {
+            path.setAttribute('title', `${label}\nПКМ: сменить или удалить связь`);
+        }
 
         svg.appendChild(path);
 
-        if (label) {
-            const midX = (x1 + x2) / 2;
-            const midY = (y1 + y2) / 2;
+        const showLabel = label && routed.labelSegLen >= 80;
+        if (showLabel) {
+            const midX = routed.labelX;
+            const midY = routed.labelY;
             const labelWidth = Math.min(300, Math.max(140, Math.ceil(label.length * 5.6)));
             const labelHeight = label.length > 24 ? 44 : 30;
 
@@ -450,6 +673,7 @@ class ConnectionManager {
     }
 
     showNotification(message, type = 'info') {
+        if (this.designer?._suppressNotifications) return;
         let container = document.getElementById('notifications-container');
         if (!container) {
             container = document.createElement('div');

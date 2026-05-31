@@ -22,8 +22,8 @@ class FactoryDesigner {
         this.selectionManager = null;
         this._suppressConnectionClick = false;
         this.catalogTab = 'all';
-        this.workspaceWidth = 12000;
-        this.workspaceHeight = 9000;
+        this.workspaceWidth = 26000;
+        this.workspaceHeight = 18000;
         this.nextPlacementId = 1;
         this.projectStorageKey = this.resolveProjectStorageKey();
         this.ready = this.init();
@@ -551,8 +551,21 @@ class FactoryDesigner {
 
                 let badgeHTML = '';
                 if (equipment.catalogType === 'equipment_complex') {
-                    const summary = window.CatalogMeta?.getComplexSummary(equipment.id) || '';
-                    badgeHTML = `<span class="catalog-badge catalog-badge--complex">Комплекс станков</span>${summary ? `<div style="font-size:0.75rem;color:#1e40af;margin-bottom:4px;">${summary}</div>` : ''}`;
+                    const summary = window.CatalogMeta?.getComplexSummary(equipment.id, equipment) || '';
+                    const members = window.CatalogMeta?.getComplexMemberPreview(
+                        equipment.id,
+                        equipment,
+                        this.allEquipment
+                    ) || '';
+                    const isLine = /лесопил/i.test(equipment.equipment_type || '') || /линия/i.test(equipment.name || '');
+                    const badgeLabel = isLine ? 'Лесопильная линия' : 'Комплекс станков';
+                    badgeHTML = `<span class="catalog-badge catalog-badge--complex">${badgeLabel}</span>
+                        ${summary ? `<div class="catalog-complex-summary">${summary}</div>` : ''}
+                        <div class="catalog-complex-members-title">Состав:</div>
+                        ${members
+                            ? `<div class="catalog-complex-members">${members}</div>`
+                            : `<div class="catalog-complex-members catalog-complex-members--empty">Станки подбираются при развёртывании на поле</div>`}
+                        <div class="catalog-complex-hint">Перетащите на поле — развернётся в станки</div>`;
                 } else if (equipment.catalogType === 'log_feed') {
                     badgeHTML = '<span class="catalog-badge catalog-badge--log-feed">Подача бревна</span>';
                 } else if (equipment.catalogType === 'conveyor') {
@@ -594,7 +607,7 @@ class FactoryDesigner {
                 equipmentElement.innerHTML = `
                     ${imageHTML}
                     ${badgeHTML}
-                    <div class="equipment-type">${this.getEquipmentTypeName(equipment.equipment_type)}</div>
+                    ${equipment.catalogType !== 'equipment_complex' ? `<div class="equipment-type">${this.getEquipmentTypeName(equipment.equipment_type)}</div>` : ''}
                     <h4>${equipment.name}</h4>
                     <div class="equipment-card-info">
                         <p><i class="fas fa-tachometer-alt"></i> Производительность: ${calculatedProductivity} м³/смену</p>
@@ -1156,11 +1169,7 @@ class FactoryDesigner {
                 this.selectionManager.updateSelectionChrome();
             }
             if (this.connectionManager && !isNaN(placementId)) {
-                this.connectionManager.connections
-                    .filter(conn => conn.fromId === placementId || conn.toId === placementId)
-                    .forEach(conn => {
-                        this.connectionManager.drawConnection(conn);
-                    });
+                this.connectionManager.redrawAllConnections();
             }
         };
         
@@ -1700,6 +1709,7 @@ class FactoryDesigner {
     }
 
     showNotification(message, type = 'info') {
+        if (this._suppressNotifications) return;
         if (this.connectionManager) {
             this.connectionManager.showNotification(message, type);
         }

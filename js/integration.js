@@ -9,8 +9,6 @@
     const COOKIE_USER_ID = 'leskom_user_id';
     const IS_FILE_PROTOCOL = global.location?.protocol === 'file:';
     const AUTOSAVE_DEBOUNCE_MS = 900;
-    const SYNC_FADE_OUT_MS = 280;
-    const SYNC_FADE_IN_MS = 380;
 
     /** Адаптивный опрос: редко в одиночку, чаще при совместном редактировании */
     const SYNC_POLL = {
@@ -143,10 +141,6 @@
         }
     }
 
-    function delay(ms) {
-        return new Promise((resolve) => setTimeout(resolve, ms));
-    }
-
     function getWorkspaceContainer() {
         if (typeof global.document?.getElementById !== 'function') return null;
         return global.document.getElementById('workspaceContainer');
@@ -199,6 +193,16 @@
         container.addEventListener('pointercancel', onUp, true);
     }
 
+    function clearWorkspaceSyncVisuals() {
+        const container = getWorkspaceContainer();
+        if (!container) return;
+        container.classList.remove(
+            'workspace-sync-active',
+            'workspace-sync-dimmed',
+            'workspace-sync-restored'
+        );
+    }
+
     function setSyncStatus(text, kind) {
         const el = global.document.getElementById('projectSyncStatus');
         if (!el) return;
@@ -223,26 +227,6 @@
         requestAnimationFrame(() => {
             el.classList.add('project-sync-status--visible');
         });
-    }
-
-    async function withWorkspaceSyncTransition(applyFn) {
-        const container = getWorkspaceContainer();
-        if (!container) {
-            await applyFn();
-            return;
-        }
-        container.classList.add('workspace-sync-active');
-        void container.offsetWidth;
-        container.classList.add('workspace-sync-dimmed');
-        await delay(SYNC_FADE_OUT_MS);
-        try {
-            await applyFn();
-        } finally {
-            container.classList.remove('workspace-sync-dimmed');
-            container.classList.add('workspace-sync-restored');
-            await delay(SYNC_FADE_IN_MS);
-            container.classList.remove('workspace-sync-restored', 'workspace-sync-active');
-        }
     }
 
     async function apiFetch(apiBase, path, options) {
@@ -301,8 +285,9 @@
         }
         syncState.applyingRemote = true;
         designer._suppressProjectDirty = true;
+        designer._suppressNotifications = true;
         try {
-            await designer.loadProjectFromObject(project);
+            await designer.loadProjectFromObject(project, { silent: true });
             const titleInput = global.document.getElementById('projectTitleInput');
             if (titleInput && body.title) {
                 titleInput.value = body.title;
@@ -315,6 +300,7 @@
             syncState.localDirty = false;
         } finally {
             designer._suppressProjectDirty = false;
+            designer._suppressNotifications = false;
             syncState.applyingRemote = false;
         }
         if (!silent) {
@@ -643,23 +629,22 @@
 
         syncState.applyingRemote = true;
         designer._suppressProjectDirty = true;
-        const collabRemote = syncState.othersEditing;
-        if (!collabRemote) setSyncStatus('Синхронизация с сервером…', 'busy');
+        designer._suppressNotifications = true;
+        clearWorkspaceSyncVisuals();
         try {
-            await withWorkspaceSyncTransition(async () => {
-                await designer.loadProjectFromObject(remoteProject, { preserveView: true });
-                const titleInput = global.document.getElementById('projectTitleInput');
-                if (titleInput && body.title) titleInput.value = body.title;
+            await designer.loadProjectFromObject(remoteProject, {
+                preserveView: true,
+                silent: true,
+                seamless: true
             });
+            const titleInput = global.document.getElementById('projectTitleInput');
+            if (titleInput && body.title) titleInput.value = body.title;
             syncState.knownServerUpdatedAt = remoteAt;
             syncState.localDirty = false;
             markHotSyncWindow();
-            if (!collabRemote) {
-                setSyncStatus('Синхронизировано', 'ok');
-                setTimeout(() => setSyncStatus('', ''), 2800);
-            }
         } finally {
             designer._suppressProjectDirty = false;
+            designer._suppressNotifications = false;
             syncState.applyingRemote = false;
         }
     }
@@ -716,6 +701,7 @@
         syncState._designer = designer;
         syncState._params = params;
         bindWorkspaceInteractionGuard();
+        clearWorkspaceSyncVisuals();
         sendPresenceHeartbeat(params);
         syncState.presenceTimer = setInterval(() => sendPresenceHeartbeat(params), SYNC_POLL.PRESENCE_MS);
         syncState._onVisibility = () => {

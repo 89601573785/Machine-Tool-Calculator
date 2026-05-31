@@ -278,9 +278,9 @@ body {
     left: 0;
     background: radial-gradient(circle at 1px 1px, rgba(34, 139, 34, 0.2) 1px, transparent 0);
     background-size: 20px 20px;
-    min-width: 12000px;
-    width: 12000px;
-    height: 9000px;
+    min-width: 26000px;
+    width: 26000px;
+    height: 18000px;
     overflow: visible;
     padding: 1.5rem;
     transform-origin: 0 0;

@@ -383,9 +383,7 @@ class WorkspaceSelectionManager {
 
         const cm = this.designer.connectionManager;
         if (cm) {
-            cm.connections
-                .filter((c) => c.fromId === rec.placementId || c.toId === rec.placementId)
-                .forEach((c) => cm.drawConnection(c));
+            cm.redrawAllConnections();
         }
     }
 

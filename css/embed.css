@@ -78,21 +78,6 @@ body.embed-mode .project-title-wrap:not([hidden]) {
     transform: translateY(-2px);
 }
 
-.workspace-container.workspace-sync-active {
-    transition: opacity 0.28s ease-out, filter 0.28s ease-out;
-}
-
-.workspace-container.workspace-sync-dimmed {
-    opacity: 0.38;
-    filter: blur(0.5px);
-    pointer-events: none;
-}
-
-.workspace-container.workspace-sync-restored {
-    opacity: 1;
-    filter: none;
-}
-
 .project-sync-status--busy {
     color: #856404;
 }

@@ -40,32 +40,6 @@
 
     const normalizeText = (value) => (value || '').toString().toLowerCase().replace(/ё/g, 'е');
     const includesAny = (value, needles) => needles.some(n => value.includes(n));
-    const COMPLEX_SLUG_TEMPLATES = {
-        'lesopilynye_linii/derevoobrabatyvayuschiy_kompleks': {
-            stages: [
-                ['сбц 480', 'бревнопильный станок сбц', 'sbts_480', 'sbc_480'],
-                ['акула 2m', 'многопильный двухвальный акула', 'akula_2m'],
-                ['миг-1000', 'многопильный одновальный миг', 'mig_1000'],
-                ['град-4', 'горбыльно-перерабатывающий станок град', 'grad_4']
-            ]
-        },
-        'lesopilynye_linii/lesopilynyy_kompleks_s_avtomatizatsiey': {
-            stages: [
-                ['тополь 450', 'бревнопил тополь', 'topoly_450', 'topol_450'],
-                ['акула 2m', 'многопильный двухвальный акула', 'akula_2m'],
-                ['миг-1000', 'многопильный одновальный миг', 'mig_1000'],
-                ['град-4', 'горбыльно-перерабатывающий станок град', 'grad_4'],
-                ['тсм 100', 'мультиторцовка триумф тсм', 'tsm_100', 'multitortsovka']
-            ]
-        },
-        'profilirovochnye_stanki/kompleks_stankov_dlya_profilirovaniya_brusa_sbp_200': {
-            stages: [
-                ['сбп 200', 'профилиров', 'sbp_200'],
-                ['тсм 100', 'мультиторцовка', 'торцов', 'tsm_100', 'multitortsovka', 'mulytitortsovka'],
-                ['миг-1000', 'акула 2m', 'mig_1000', 'akula_2m']
-            ]
-        }
-    };
 
     function resolveTemplateMemberId(allEquipment, selectors = [], used = new Set()) {
         if (!Array.isArray(allEquipment) || !allEquipment.length) return null;
@@ -120,35 +94,78 @@
         return { members, connections };
     }
 
-    function buildComplexTemplateBySlug(complexEquipment, allEquipment) {
-        const complexSlug = normalizeText(complexEquipment?.leskomSlug);
-        const templateDef = COMPLEX_SLUG_TEMPLATES[complexSlug];
-        if (!templateDef?.stages?.length) return null;
+    function buildComplexTemplateBySlug(complexEquipment) {
+        const template = window.CatalogMeta?.getComplexTemplate?.(complexEquipment.id, complexEquipment);
+        if (template?.members?.length >= 2) return template;
+        return null;
+    }
 
-        const used = new Set();
-        const members = [];
-        templateDef.stages.forEach(selectors => {
-            const id = resolveTemplateMemberId(allEquipment, selectors, used);
-            if (id) members.push({ catalogId: id });
+    function computeComplexLayout(designer, template, resolved, dropX, dropY) {
+        const GAP = 120;
+        const ROW_GAP = 180;
+        const positions = new Array(template.members.length);
+
+        const outgoing = new Map();
+        (template.connections || []).forEach((c) => {
+            if (!outgoing.has(c.fromIndex)) outgoing.set(c.fromIndex, []);
+            outgoing.get(c.fromIndex).push(c.toIndex);
         });
-        if (members.length < 2) return null;
+        const hasFork = [...outgoing.values()].some((targets) => targets.length > 1);
 
-        const connections = [];
-        for (let i = 0; i < members.length - 1; i += 1) {
-            connections.push({
-                fromIndex: i,
-                toIndex: i + 1,
-                conveyorCatalogId: window.CatalogMeta?.DEFAULT_CONVEYOR_ID
+        const byIndex = (idx) => resolved.find((r) => r.index === idx)?.eq || null;
+        const cardSize = (eq) => (eq ? designer.getEquipmentCardSize(eq) : { widthPx: 260, lengthPx: 260 });
+
+        if (hasFork) {
+            const rootIdx = 0;
+            const rootEq = byIndex(rootIdx);
+            const rootSize = cardSize(rootEq);
+            positions[rootIdx] = { x: dropX, y: dropY };
+
+            const children = outgoing.get(rootIdx) || [];
+            children.forEach((childIdx, branchI) => {
+                const childEq = byIndex(childIdx);
+                const childSize = cardSize(childEq);
+                positions[childIdx] = {
+                    x: dropX + rootSize.widthPx + GAP,
+                    y: dropY + branchI * (Math.max(rootSize.lengthPx, childSize.lengthPx) + ROW_GAP * 0.45)
+                };
             });
+
+            let tailX = dropX;
+            let maxRowY = dropY;
+            resolved.forEach(({ index, eq }) => {
+                if (!eq || positions[index]) return;
+                const size = cardSize(eq);
+                positions[index] = { x: tailX, y: maxRowY + ROW_GAP + size.lengthPx * 0.15 };
+                tailX += size.widthPx + GAP;
+            });
+            return positions;
         }
 
-        return { members, connections };
+        let cursorX = dropX;
+        const baseY = dropY;
+        template.members.forEach((member, idx) => {
+            const eq = byIndex(idx);
+            if (!eq) return;
+            const size = cardSize(eq);
+            if (Number.isFinite(member.offsetY) && member.offsetY > 0) {
+                positions[idx] = {
+                    x: dropX + (Number.isFinite(member.offsetX) ? member.offsetX : cursorX - dropX),
+                    y: dropY + member.offsetY * 0.85
+                };
+                cursorX = Math.max(cursorX, positions[idx].x + size.widthPx + GAP);
+                return;
+            }
+            positions[idx] = { x: cursorX, y: baseY };
+            cursorX += size.widthPx + GAP;
+        });
+        return positions;
     }
 
     FactoryDesigner.prototype.expandComplex = async function (complexEquipment, dropX, dropY) {
         const template =
-            window.CatalogMeta?.getComplexTemplate(complexEquipment.id) ||
-            buildComplexTemplateBySlug(complexEquipment, this.allEquipment || []) ||
+            window.CatalogMeta?.getComplexTemplate(complexEquipment.id, complexEquipment) ||
+            buildComplexTemplateBySlug(complexEquipment) ||
             buildFallbackComplexTemplate(complexEquipment, this.allEquipment || []);
         if (!template || !template.members?.length) {
             this.showNotification('Шаблон комплекса не найден — размещён как карточка', 'warning');
@@ -156,57 +173,24 @@
             return;
         }
 
-        const equipmentById = new Map((this.allEquipment || []).map(eq => [eq.id, eq]));
+        const allEquipment = this.allEquipment || [];
         const placementIds = new Array(template.members.length).fill(null);
+        const usedEquip = new Set();
+        const resolveMember = (member) =>
+            window.CatalogMeta?.resolveComplexMember?.(member, allEquipment, usedEquip);
 
-        // Аккуратное построение: уровни графа с равными отступами.
-        const indegree = new Array(template.members.length).fill(0);
-        const out = new Map();
-        (template.connections || []).forEach(link => {
-            if (!out.has(link.fromIndex)) out.set(link.fromIndex, []);
-            out.get(link.fromIndex).push(link.toIndex);
-            indegree[link.toIndex] = (indegree[link.toIndex] || 0) + 1;
-        });
+        const resolved = template.members.map((member, index) => ({
+            index,
+            eq: resolveMember(member)
+        }));
+        const positions = computeComplexLayout(this, template, resolved, dropX, dropY);
 
-        const roots = [];
-        indegree.forEach((deg, idx) => {
-            if (!deg) roots.push(idx);
-        });
-        if (!roots.length) roots.push(0);
-
-        const level = new Array(template.members.length).fill(0);
-        const queue = [...roots];
-        while (queue.length) {
-            const node = queue.shift();
-            const next = out.get(node) || [];
-            next.forEach(to => {
-                const cand = level[node] + 1;
-                if (cand > level[to]) level[to] = cand;
-                queue.push(to);
-            });
-        }
-
-        const byLevel = new Map();
-        level.forEach((lvl, idx) => {
-            if (!byLevel.has(lvl)) byLevel.set(lvl, []);
-            byLevel.get(lvl).push(idx);
-        });
-        const levels = [...byLevel.keys()].sort((a, b) => a - b);
-        const colGap = 360;
-        const rowGap = 240;
-
-        levels.forEach(lvl => {
-            const nodes = byLevel.get(lvl);
-            const totalHeight = (nodes.length - 1) * rowGap;
-            nodes.forEach((memberIndex, rowIndex) => {
-                const member = template.members[memberIndex];
-                const eq = equipmentById.get(member.catalogId);
-                if (!eq) return;
-                const x = dropX + lvl * colGap;
-                const y = dropY + rowIndex * rowGap - totalHeight / 2;
-                const el = this.placeEquipmentInstance(eq, x, y);
-                if (el) placementIds[memberIndex] = parseInt(el.dataset.placementId, 10);
-            });
+        resolved.forEach(({ index, eq }) => {
+            if (!eq) return;
+            const pos = positions[index];
+            if (!pos) return;
+            const el = this.placeEquipmentInstance(eq, pos.x, pos.y);
+            if (el) placementIds[index] = parseInt(el.dataset.placementId, 10);
         });
 
         if (this.connectionManager && template.connections) {
@@ -216,14 +200,24 @@
                 if (!fromId || !toId) continue;
                 await this.connectionManager.createConnection(fromId, toId, 'right', 'left', {
                     skipModal: true,
+                    silent: true,
+                    _deferRedraw: true,
                     conveyorCatalogId: link.conveyorCatalogId || CatalogMeta.DEFAULT_CONVEYOR_ID,
                     ignoreCompatibility: true
                 });
             }
+            this.connectionManager.redrawAllConnections();
         }
 
         const placedCount = placementIds.filter(Boolean).length;
-        this.showNotification(`Комплекс «${complexEquipment.name}» развёрнут (${placedCount} станков)`, 'success');
+        if (placedCount < 1) {
+            this.showNotification(
+                'Не удалось подобрать станки линии в каталоге — проверьте загрузку каталога',
+                'warning'
+            );
+            return;
+        }
+        this.showNotification(`Линия «${complexEquipment.name}» развёрнута (${placedCount} станков)`, 'success');
     };
 
     FactoryDesigner.prototype.computeLineProduction = function () {
@@ -351,7 +345,7 @@
                 machine: 'Станки',
                 log_feed: 'Подача бревна',
                 conveyor: 'Конвейеры',
-                complex: 'Комплексы'
+                complex: 'Комплексы и линии'
             };
             catalogBadge.textContent = labels[this.catalogTab] || '';
         }
@@ -394,8 +388,9 @@
         return project;
     };
 
-    FactoryDesigner.prototype.restoreConnections = async function (connections) {
+    FactoryDesigner.prototype.restoreConnections = async function (connections, options = {}) {
         if (!this.connectionManager || !Array.isArray(connections)) return;
+        const silent = !!options.silent;
         for (const c of connections) {
             const fromId = Number(c.fromId);
             const toId = Number(c.toId);
@@ -403,6 +398,8 @@
             const hasConveyor = c.conveyorCatalogId != null && c.conveyorCatalogId !== '';
             const opts = {
                 skipModal: true,
+                silent,
+                _deferRedraw: true,
                 conveyorCatalogId: hasConveyor ? Number(c.conveyorCatalogId) : null
             };
             const result = await this.connectionManager.createConnection(
@@ -417,8 +414,145 @@
             } else if (c.conveyorName) {
                 last.conveyorName = c.conveyorName;
             }
-            this.connectionManager.drawConnection(last);
         }
+        this.connectionManager.redrawAllConnections();
+    };
+
+    FactoryDesigner.prototype.syncConnectionsFromProject = async function (connections, options = {}) {
+        const silent = !!options.silent;
+        const movedIds = options.movedIds || new Set();
+        const cm = this.connectionManager;
+        if (!cm) return;
+
+        const desired = [];
+        for (const c of connections || []) {
+            const fromId = Number(c.fromId);
+            const toId = Number(c.toId);
+            if (!Number.isFinite(fromId) || !Number.isFinite(toId)) continue;
+            const hasConveyor = c.conveyorCatalogId != null && c.conveyorCatalogId !== '';
+            desired.push({
+                fromId,
+                toId,
+                fromSide: c.fromSide,
+                toSide: c.toSide,
+                conveyorCatalogId: hasConveyor ? Number(c.conveyorCatalogId) : null,
+                conveyorName: hasConveyor ? (c.conveyorName ?? null) : null
+            });
+        }
+
+        const pairKey = (fromId, toId) => `${fromId}:${toId}`;
+        const desiredMap = new Map(desired.map((d) => [pairKey(d.fromId, d.toId), d]));
+
+        for (const conn of [...cm.connections]) {
+            if (desiredMap.has(pairKey(conn.fromId, conn.toId))) continue;
+            if (conn._cleanup) conn._cleanup();
+            if (conn.element) conn.element.remove();
+        }
+        cm.connections = cm.connections.filter((c) => desiredMap.has(pairKey(c.fromId, c.toId)));
+
+        for (const spec of desired) {
+            let existing = cm.connections.find(
+                (c) => c.fromId === spec.fromId && c.toId === spec.toId
+            );
+            if (!existing) {
+                await cm.createConnection(spec.fromId, spec.toId, spec.fromSide, spec.toSide, {
+                    skipModal: true,
+                    silent,
+                    _deferRedraw: true,
+                    conveyorCatalogId: spec.conveyorCatalogId
+                });
+                existing = cm.connections.find(
+                    (c) => c.fromId === spec.fromId && c.toId === spec.toId
+                );
+                if (existing && spec.conveyorName) existing.conveyorName = spec.conveyorName;
+                continue;
+            }
+            const convChanged =
+                (existing.conveyorCatalogId ?? null) !== (spec.conveyorCatalogId ?? null);
+            if (convChanged) {
+                existing.conveyorCatalogId = spec.conveyorCatalogId;
+                existing.conveyorName = spec.conveyorName;
+                if (existing.element) {
+                    existing._cleanup?.();
+                    existing.element.remove();
+                    existing.element = null;
+                }
+                continue;
+            }
+            const endpointsMoved = movedIds.has(spec.fromId) || movedIds.has(spec.toId);
+            if (endpointsMoved || !existing.element) {
+                if (existing.element) {
+                    existing._cleanup?.();
+                    existing.element.remove();
+                    existing.element = null;
+                }
+            }
+        }
+        cm.redrawAllConnections();
+    };
+
+    FactoryDesigner.prototype.syncProjectFromObject = async function (project, options = {}) {
+        const silent = !!options.silent;
+        const movedIds = new Set();
+        const lookup = this.buildEquipmentLookup();
+        const remoteById = new Map();
+        let maxPlacementId = 0;
+        let missing = 0;
+
+        for (const p of project.placed) {
+            const placementId = Number(p.placementId);
+            if (!Number.isFinite(placementId)) continue;
+            remoteById.set(placementId, p);
+            if (placementId > maxPlacementId) maxPlacementId = placementId;
+        }
+
+        for (const rec of [...this.placedEquipment]) {
+            if (!remoteById.has(rec.placementId)) {
+                this.removeEquipment(rec.element);
+            }
+        }
+
+        for (const [placementId, p] of remoteById) {
+            const eq = this.resolveEquipmentForPlacement(p, lookup);
+            if (!eq) {
+                missing += 1;
+                continue;
+            }
+            const x = Number(p.x);
+            const y = Number(p.y);
+            if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+            const existing = this.placedEquipment.find((r) => r.placementId === placementId);
+            if (existing) {
+                const equipmentId = eq.id;
+                if (existing.equipmentId !== equipmentId) {
+                    this.removeEquipment(existing.element);
+                    this.placeEquipmentInstance(eq, x, y, placementId);
+                } else {
+                    const snapped = this.applySnap(x, y);
+                    if (existing.x !== snapped.x || existing.y !== snapped.y) {
+                        movedIds.add(placementId);
+                        existing.x = snapped.x;
+                        existing.y = snapped.y;
+                        existing.element.style.left = `${snapped.x}px`;
+                        existing.element.style.top = `${snapped.y}px`;
+                    }
+                }
+            } else {
+                this.placeEquipmentInstance(eq, x, y, placementId);
+            }
+        }
+
+        this.nextPlacementId = Math.max(this.nextPlacementId, maxPlacementId + 1);
+
+        if (missing > 0 && !silent) {
+            this.showNotification?.(
+                `Не найдено в каталоге: ${missing} из ${project.placed.length} станков`,
+                'warning'
+            );
+        }
+
+        await this.syncConnectionsFromProject(project.connections || [], { silent, movedIds });
     };
 
     FactoryDesigner.prototype.loadProjectFromObject = async function (project, options = {}) {
@@ -430,9 +564,27 @@
         }
 
         const preserveView = !!options.preserveView;
+        const silent = !!options.silent;
+        const seamless = !!options.seamless;
         const savedView = preserveView
             ? { zoom: this.zoom, panX: this.panX, panY: this.panY }
             : null;
+
+        if (seamless) {
+            if (preserveView && savedView) {
+                this.zoom = savedView.zoom;
+                this.panX = savedView.panX;
+                this.panY = savedView.panY;
+                this.updateTransform();
+                const zoomLabel = document.getElementById('zoomLevel');
+                if (zoomLabel) zoomLabel.textContent = Math.round(this.zoom * 100) + '%';
+            }
+            const titleInput = document.getElementById('projectTitleInput');
+            if (titleInput && project.title) titleInput.value = project.title;
+            await this.syncProjectFromObject(project, { silent });
+            this.updateGridByZoom?.();
+            return;
+        }
 
         this.clearWorkspace(false);
 
@@ -473,7 +625,7 @@
         });
         this.nextPlacementId = Math.max(this.nextPlacementId, maxPlacementId + 1);
 
-        if (missing > 0) {
+        if (missing > 0 && !silent) {
             this.showNotification?.(
                 `Не найдено в каталоге: ${missing} из ${project.placed.length} станков`,
                 'warning'
@@ -482,7 +634,7 @@
 
         const connections = project.connections;
         if (connections?.length) {
-            await this.restoreConnections(connections);
+            await this.restoreConnections(connections, { silent });
         }
 
         if (this.placedEquipment.length > 0) {

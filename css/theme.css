@@ -125,6 +125,38 @@ body {
     border-left: 3px solid #3b82f6;
 }
 
+.catalog-complex-summary {
+    font-size: 0.75rem;
+    color: #1e40af;
+    margin-bottom: 0.35rem;
+}
+
+.catalog-complex-members-title {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: #1e3a5f;
+    margin-bottom: 0.25rem;
+}
+
+.catalog-complex-members {
+    font-size: 0.72rem;
+    color: #334155;
+    line-height: 1.45;
+    margin-bottom: 0.4rem;
+}
+
+.catalog-complex-members--empty {
+    color: #64748b;
+    font-style: italic;
+}
+
+.catalog-complex-hint {
+    font-size: 0.7rem;
+    color: #64748b;
+    font-style: italic;
+    margin-bottom: 0.35rem;
+}
+
 .equipment-item[data-catalog-type="conveyor"] {
     border-left: 3px solid var(--leskom-orange);
 }

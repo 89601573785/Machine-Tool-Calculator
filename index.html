@@ -4,11 +4,11 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Онлайн-сборщик производственного цеха</title>
-    <link rel="stylesheet" href="css/style.css?v=20260528-keep-view">
-    <link rel="stylesheet" href="css/theme.css?v=20260528-keep-view">
-    <link rel="stylesheet" href="css/connections.css?v=20260528-keep-view">
-    <link rel="stylesheet" href="css/embed.css?v=20260528-keep-view">
-    <link rel="stylesheet" href="css/workspace-selection.css?v=20260528-keep-view">
+    <link rel="stylesheet" href="css/style.css?v=20260531-docs">
+    <link rel="stylesheet" href="css/theme.css?v=20260531-docs">
+    <link rel="stylesheet" href="css/connections.css?v=20260531-docs">
+    <link rel="stylesheet" href="css/embed.css?v=20260531-docs">
+    <link rel="stylesheet" href="css/workspace-selection.css?v=20260531-docs">
     <!-- Локальный file:// режим: используем CDN, чтобы избежать CORS на wasm -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
@@ -35,7 +35,7 @@
                         <button type="button" class="catalog-tab" data-tab="machine"><span class="tab-label-full">Станки</span></button>
                         <button type="button" class="catalog-tab" data-tab="log_feed"><span class="tab-label-full">Подача бревна</span></button>
                         <button type="button" class="catalog-tab" data-tab="conveyor"><span class="tab-label-full">Конвейеры</span></button>
-                        <button type="button" class="catalog-tab" data-tab="complex"><span class="tab-label-full">Комплексы</span></button>
+                        <button type="button" class="catalog-tab" data-tab="complex"><span class="tab-label-full">Комплексы и линии</span></button>
                     </div>
                     <div id="catalogTabHint" class="catalog-tab-hint"></div>
                     <div class="equipment-catalog" id="equipmentCatalog">
@@ -205,7 +205,7 @@
                 <li><strong>Станки</strong> — размещаются на рабочей области перетаскиванием.</li>
                 <li><strong>Подача бревна</strong> — оборудование загрузочного участка (при необходимости).</li>
                 <li><strong>Конвейеры</strong> — назначаются при создании связи, отдельно на поле не размещаются.</li>
-                <li><strong>Комплексы</strong> — типовые линии с автоматическим размещением состава.</li>
+                <li><strong>Комплексы и линии</strong> — типовые лесопильные линии; в карточке указан <strong>состав станков</strong>. Перетащите линию на поле — она <strong>развернётся</strong> в отдельные станки со связями.</li>
             </ul>
 
             <h4 class="how-to-use-heading">Навигация по полю</h4>
@@ -217,6 +217,7 @@
 
             <h4 class="how-to-use-heading">Рабочая область</h4>
             <ul>
+                <li>Размер поля увеличен (<strong>26000×18000</strong> px) — удобно для длинных линий и разветвлений.</li>
                 <li>Выделение — ЛКМ на пустом месте, протяните рамку (как в Windows).</li>
                 <li>Группа — перетащите любой станок из выделения; удаление — <kbd>Delete</kbd> или кнопка на рамке.</li>
                 <li>Один станок — перетащите карточку; удаление — <strong>×</strong> на карточке.</li>
@@ -229,13 +230,13 @@
                 <li>Сначала источник, затем приёмник.</li>
                 <li>Конвейер из каталога или <strong>«Без конвейера»</strong>.</li>
             </ol>
-            <p>В режиме «Связать» рамка выделения не используется. Перетаскивание станка не создаёт связь. Правка связи — <strong>ПКМ</strong> по линии.</p>
+            <p>Линии связей строятся так, чтобы при разветвлениях было видно, что куда идёт. Подпись «Конвейер» — на длинных участках; на коротких — подсказка при наведении на линию. Редактирование — <strong>ПКМ</strong> по линии (сменить конвейер или удалить).</p>
 
             <h4 class="how-to-use-heading">Сохранение и обновления</h4>
             <ul>
                 <li>Изменения сохраняются <strong>авоматически</strong> (кнопки «Сохранить» нет).</li>
                 <li>Если вы один — сервер проверяется примерно раз в полминуты.</li>
-                <li>Если схему открыли в двух окнах или зашёл ещё пользователь — обновления приходят чаще, поле кратко затемняется; <strong>ваш масштаб и положение камеры не сбрасываются</strong>.</li>
+                <li>Если схему открыли в двух окнах или зашёл ещё пользователь — обновления приходят чаще; правки подтягиваются <strong>без затемнения</strong> поля, <strong>масштаб и положение камеры не сбрасываются</strong>.</li>
                 <li>Пока вы перетаскиваете станок, чужие правки подождут до отпускания мыши.</li>
                 <li>Список конфигураций — <strong>«Мои конфигурации»</strong> в личном кабинете.</li>
             </ul>
@@ -268,7 +269,7 @@
                 <li><strong>Станки</strong> — основное технологическое оборудование линии.</li>
                 <li><strong>Подача бревна</strong> — накопители, кантователи, бревнотаски, устройства поштучной выдачи, центрователи (размещаются на схеме до линии станков).</li>
                 <li><strong>Конвейеры</strong> — рольганги, транспортеры; указываются при создании связи между станками, на поле отдельно не размещаются.</li>
-                <li><strong>Комплексы</strong> — типовые лесопильные линии с автоматическим развёртыванием состава и связей.</li>
+                <li><strong>Комплексы и линии</strong> — типовые лесопильные линии; в карточке — состав (список станков). Перетаскивание на поле разворачивает линию в станки с автоматическими связями и подбором конвейеров по шаблону.</li>
             </ul>
 
             <h4 class="how-to-use-heading">Навигация по рабочей области</h4>
@@ -277,6 +278,7 @@
                 <li>Панорамирование — <kbd>Alt</kbd>, СКМ, ПКМ или ЛКМ по пустому фону (вне режима «Связать»).</li>
                 <li>Кнопка <strong>⊙</strong> — центрирование вида (ручное действие; при автосинхронизации центр не вызывается).</li>
                 <li>Шаг сетки — поле <strong>«Клетка»</strong>; привязка к сетке включена.</li>
+                <li>Рабочая зона — <strong>26000×18000</strong> px (красная пунктирная граница).</li>
             </ul>
 
             <h4 class="how-to-use-heading">Рабочая область</h4>
@@ -285,7 +287,6 @@
                 <li>Групповое перемещение и удаление (<kbd>Delete</kbd> или кнопка на рамке выделения).</li>
                 <li>Одиночный станок — drag карточки; <strong>×</strong> — удаление.</li>
                 <li>В режиме <strong>«Связать»</strong> / <kbd>Shift</kbd> выделение не перехватывает клики по станкам.</li>
-                <li>Граница — красная пунктирная линия.</li>
             </ul>
 
             <h4 class="how-to-use-heading">Технологические связи</h4>
@@ -294,7 +295,7 @@
                 <li>Станок-источник, затем приёмник.</li>
                 <li>Конвейер из каталога или <strong>«Без конвейера»</strong> (без учёта транспортёра в стоимости).</li>
             </ol>
-            <p>На пару станков — одна связь. Редактирование — <strong>ПКМ</strong> по линии. После перетаскивания станка случайная связь не создаётся. Сохранённые пустые связи восстанавливаются при открытии.</p>
+            <p>На пару станков — одна связь. Маршруты линий разводятся (отдельные «коридоры»), чтобы при разветвлениях было понятно направление потока. Подпись конвейера — на длинных участках; на коротких — всплывающая подсказка на линии. Редактирование — <strong>ПКМ</strong> по линии. После перетаскивания станка случайная связь не создаётся. Сохранённые пустые связи восстанавливаются при открытии.</p>
 
             <h4 class="how-to-use-heading">Расчёт и отчётность</h4>
             <ul>
@@ -308,7 +309,7 @@
             <ul>
                 <li>Автосохранение на сервер ~0,9 с после последней правки; отдельной кнопки «Сохранить» нет.</li>
                 <li>Один редактор — лёгкий опрос сервера ~24 с; присутствие вкладки (heartbeat) не меняет время изменения схемы.</li>
-                <li>Два окна одной схемы или клиент + менеджер — опрос ~4,5 с, подтягивание чужих правок с плавным затуханием поля.</li>
+                <li>Два окна одной схемы или клиент + менеджер — опрос ~4,5 с, подтягивание чужих правок <strong>без затемнения</strong> поля.</li>
                 <li>При подгрузке с сервера сохраняются <strong>текущий масштаб и смещение</strong> камеры (без принудительного центрирования).</li>
                 <li>Во время перетаскивания или несохранённой правки удалённая схема не применяется — только после паузы.</li>
                 <li>Новая конфигурация — запрос названия при первом входе без <code>projectId</code>.</li>
@@ -324,13 +325,13 @@
         </div>
     </template>
 
-    <script src="js/equipment-data.js?v=20260528-keep-view"></script>
-    <script src="js/catalog-meta.js?v=20260528-keep-view"></script>
-    <script src="js/connections.js?v=20260528-keep-view"></script>
-    <script src="js/workspace-selection.js?v=20260528-keep-view"></script>
-    <script src="js/integration.js?v=20260528-keep-view"></script>
-    <script src="js/main.js?v=20260528-keep-view"></script>
-    <script src="js/factory-extensions.js?v=20260528-keep-view"></script>
+    <script src="js/equipment-data.js?v=20260531-docs"></script>
+    <script src="js/catalog-meta.js?v=20260531-docs"></script>
+    <script src="js/connections.js?v=20260531-docs"></script>
+    <script src="js/workspace-selection.js?v=20260531-docs"></script>
+    <script src="js/integration.js?v=20260531-docs"></script>
+    <script src="js/main.js?v=20260531-docs"></script>
+    <script src="js/factory-extensions.js?v=20260531-docs"></script>
 </body>
 </html>
 
